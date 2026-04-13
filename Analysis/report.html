@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    @page {
+      size: A4;
+      margin: 14mm;
+    }
+    body {
+      font-family: "Apple SD Gothic Neo", "Noto Sans KR", system-ui, -apple-system, sans-serif;
+      background: #f7f9fc;
+      font-size: 12px;
+      color: #1b1d21;
+      line-height: 1.4;
+    }
+    .page-header {
+      background: #ffffff;
+      border: 1px solid rgba(49, 51, 63, 0.12);
+      border-radius: 16px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 10px rgba(0, 0, 0, 0.04);
+    }
+    .title {
+      font-size: 22px;
+      font-weight: 800;
+      margin: 0 0 4px 0;
+    }
+    .meta {
+      color: #6b7280;
+      font-size: 11px;
+      margin: 0;
+    }
+    .section-card {
+      background: #ffffff;
+      border: 1px solid rgba(49, 51, 63, 0.12);
+      border-radius: 16px;
+      padding: 14px 14px 10px 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 10px rgba(0, 0, 0, 0.04);
+      page-break-inside: avoid;
+    }
+    .section-title {
+      font-size: 17px;
+      font-weight: 800;
+      margin: 0 0 2px 0;
+    }
+    .section-desc {
+      font-size: 11px;
+      color: #6b7280;
+      margin: 0 0 10px 0;
+    }
+    .metric-grid {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 8px;
+      margin: 0;
+    }
+    .metric-grid td {
+      border: none;
+      padding: 0;
+      vertical-align: top;
+    }
+    .kpi-card {
+      background: #f7f9ff;
+      border: 1px solid rgba(49, 51, 63, 0.10);
+      border-radius: 12px;
+      padding: 10px;
+      min-height: 66px;
+      page-break-inside: avoid;
+    }
+    .kpi-label {
+      color: #5b6475;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .kpi-value {
+      font-size: 18px;
+      font-weight: 800;
+      margin-top: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 6px;
+      page-break-inside: avoid;
+    }
+    th, td {
+      border: 1px solid #d6dbe4;
+      padding: 6px;
+      vertical-align: top;
+    }
+    th {
+      background: #f5f8fc;
+      font-weight: 700;
+      text-align: left;
+    }
+    ul {
+      margin: 6px 0 0 18px;
+      padding: 0;
+    }
+    li { margin: 4px 0; }
+    pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: inherit;
+      margin: 0;
+    }
+    .sub-card {
+      border: 1px solid rgba(49, 51, 63, 0.12);
+      border-radius: 12px;
+      padding: 10px;
+      margin-top: 8px;
+      background: #fff;
+    }
+    .small-note {
+      color: #6b7280;
+      font-size: 10px;
+      margin-top: 8px;
+    }
+    .note-box {
+      background: rgba(25, 118, 210, 0.06);
+      border: 1px solid rgba(25, 118, 210, 0.20);
+      border-radius: 10px;
+      padding: 10px;
+      margin-top: 8px;
+    }
+    .sub-title {
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="page-header">
+    <div class="title">{{ report_title }}</div>
+    <div class="meta">생성일: {{ generated_at }} | PDF 전용 리포트</div>
+  </div>
+
+  <div class="section-card">
+    <div class="section-title">2) 개요 분석</div>
+    <div class="section-desc">전체 리뷰 규모, 평균 평점, 작성 기간과 일별 추이를 정리합니다.</div>
+
+    <table class="metric-grid">
+      <tr>
+        <td>
+          <div class="kpi-card">
+            <div class="kpi-label">전체 리뷰 수</div>
+            <div class="kpi-value">{{ overview.total_reviews }}</div>
+          </div>
+        </td>
+        <td>
+          <div class="kpi-card">
+            <div class="kpi-label">평균 평점</div>
+            <div class="kpi-value">{{ overview.avg_rating }}</div>
+          </div>
+        </td>
+        <td>
+          <div class="kpi-card">
+            <div class="kpi-label">리뷰 작성 기간</div>
+            <div class="kpi-value">{{ overview.period_text }}</div>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <div class="sub-card">
+      <div class="sub-title">기간별 리뷰 수{% if overview.daily_reviews and overview.daily_reviews|length > 0 %}(일 단위){% elif overview.monthly_reviews and overview.monthly_reviews|length > 0 %}(월 단위){% endif %}</div>
+      {% if overview.daily_reviews and overview.daily_reviews|length > 0 %}
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30%;">날짜</th>
+              <th style="width:70%;">리뷰 수</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in overview.daily_reviews %}
+              <tr>
+                <td>{{ row.day }}</td>
+                <td>{{ row.count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% elif overview.monthly_reviews and overview.monthly_reviews|length > 0 %}
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30%;">월</th>
+              <th style="width:70%;">리뷰 수</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in overview.monthly_reviews %}
+              <tr>
+                <td>{{ row.month }}</td>
+                <td>{{ row.count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="small-note">작성일 컬럼이 없어 기간별 집계를 생성할 수 없습니다.</div>
+      {% endif %}
+
+      {% if overview.change_events and overview.change_events|length > 0 %}
+        <div class="sub-title" style="margin-top:10px;">급격한 증감 구간 요약</div>
+        <ul>
+          {% for ev in overview.change_events %}
+            <li>{{ ev }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div class="section-title">3) 키워드 / Voice of Customer</div>
+    <div class="section-desc">TOP 키워드와 구간별 키워드 변화로 고객 보이스를 확인합니다.</div>
+
+    <div class="sub-card">
+      <div class="sub-title">TOP 20 키워드</div>
+      {% if keywords.top_keywords and keywords.top_keywords|length > 0 %}
+        <table>
+          <thead>
+            <tr>
+              <th style="width:60%;">키워드</th>
+              <th style="width:40%;">빈도</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in keywords.top_keywords %}
+              <tr>
+                <td>{{ row.keyword }}</td>
+                <td>{{ row.count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="small-note">리뷰 텍스트가 부족하여 키워드를 추출할 수 없습니다.</div>
+      {% endif %}
+    </div>
+
+    <div class="sub-card">
+      <div class="sub-title">구간별 핵심 키워드 변화(요약)</div>
+      {% if keywords.keyword_changes and keywords.keyword_changes|length > 0 %}
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30%;">키워드</th>
+              <th style="width:20%;">첫 달 빈도</th>
+              <th style="width:20%;">마지막 달 빈도</th>
+              <th style="width:30%;">변화량</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in keywords.keyword_changes %}
+              <tr>
+                <td>{{ row.keyword }}</td>
+                <td>{{ row.first_count }}</td>
+                <td>{{ row.last_count }}</td>
+                <td>{{ row.delta }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="small-note">구간별 변화 추정에 필요한 작성일/텍스트 데이터가 충분하지 않습니다.</div>
+      {% endif %}
+    </div>
+
+    {% if keywords.openai_interpret_text %}
+      <div class="note-box">
+        <div class="sub-title">OpenAI 해석(키워드)</div>
+        <pre>{{ keywords.openai_interpret_text }}</pre>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="section-card">
+    <div class="section-title">4) 감성 분석</div>
+    <div class="section-desc">positive/neutral/negative 분포와 교차 키워드 패턴을 정리합니다.</div>
+
+    <div class="sub-card">
+      <div class="sub-title">감성 분포</div>
+      {% if sentiment.distribution_rows and sentiment.distribution_rows|length > 0 %}
+        <table>
+          <thead>
+            <tr>
+              <th style="width:40%;">감성</th>
+              <th style="width:60%;">리뷰 수</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in sentiment.distribution_rows %}
+              <tr>
+                <td>{{ row.label }}</td>
+                <td>{{ row.count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="small-note">평점 데이터가 없어 감성 분포를 생성할 수 없습니다.</div>
+      {% endif %}
+    </div>
+
+    <div class="sub-card">
+      <div class="sub-title">Positive / Negative 핵심 키워드</div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:40%;">positive(4점 이상)</th>
+            <th style="width:60%;">negative(2점 이하)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              {% if sentiment.positive_keywords and sentiment.positive_keywords|length > 0 %}
+                <ul>
+                  {% for row in sentiment.positive_keywords %}
+                    <li>{{ row.keyword }} ({{ row.count }})</li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="small-note">데이터 없음</div>
+              {% endif %}
+            </td>
+            <td>
+              {% if sentiment.negative_keywords and sentiment.negative_keywords|length > 0 %}
+                <ul>
+                  {% for row in sentiment.negative_keywords %}
+                    <li>{{ row.keyword }} ({{ row.count }})</li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="small-note">데이터 없음</div>
+              {% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {% if sentiment.high_star_contains_negative %}
+        <div style="margin-top:10px;font-weight:700;">높은 별점(positive) 안의 부정 키워드 섞임</div>
+        <ul>
+          {% for row in sentiment.high_star_contains_negative %}
+            <li>{{ row.keyword }} (positive 리뷰 내 함께 등장: {{ row.pos_count }}, negative 키워드 빈도: {{ row.neg_count }})</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+
+      {% if sentiment.low_star_contains_positive %}
+        <div style="margin-top:10px;font-weight:700;">낮은 별점(negative) 안의 긍정 키워드 섞임</div>
+        <ul>
+          {% for row in sentiment.low_star_contains_positive %}
+            <li>{{ row.keyword }} (negative 리뷰 내 함께 등장: {{ row.neg_count }}, positive 키워드 빈도: {{ row.pos_count }})</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+
+    {% if sentiment.openai_interpret_text %}
+      <div class="note-box">
+        <div class="sub-title">OpenAI 해석(감성)</div>
+        <pre>{{ sentiment.openai_interpret_text }}</pre>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="section-card">
+    <div class="section-title">5) Painpoint 분석</div>
+    <div class="section-desc">반복되는 문제 키워드와 AARRR 구간 이슈를 정리합니다.</div>
+
+    <div class="sub-card">
+      <div class="sub-title">문제 TOP 10</div>
+      {% if painpoints.top_pain_rows and painpoints.top_pain_rows|length > 0 %}
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30%;">문제 키워드</th>
+              <th style="width:20%;">발생 빈도</th>
+              <th style="width:50%;">가능한 원인(간단)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in painpoints.top_pain_rows %}
+              <tr>
+                <td>{{ row.keyword }}</td>
+                <td>{{ row.count }}</td>
+                <td>{{ row.cause }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="small-note">negative 리뷰 데이터가 부족하여 문제 TOP 10을 만들 수 없습니다.</div>
+      {% endif %}
+    </div>
+
+    {% if painpoints.openai_interpret_text %}
+      <div class="note-box">
+        <div class="sub-title">OpenAI 해석(Painpoint)</div>
+        <pre>{{ painpoints.openai_interpret_text }}</pre>
+      </div>
+    {% endif %}
+
+    {% if painpoints.aarrr_rows and painpoints.aarrr_rows|length > 0 %}
+      <div class="sub-card">
+        <div class="sub-title">AARRR 관점 핵심 이탈 구간(요약)</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:50%;">단계</th>
+              <th style="width:50%;">이슈 언급(negative 리뷰 내)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in painpoints.aarrr_rows %}
+              <tr>
+                <td>{{ row.stage }}</td>
+                <td>{{ row.issue_hit_count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="section-card">
+    <div class="section-title">6) Feature request analysis</div>
+    <div class="section-desc">부정 평가 기반 개선 요청을 우선순위로 정리합니다.</div>
+
+    <div class="sub-card">
+      <div class="sub-title">우선순위 추천</div>
+      {% if features.recommendation_text %}
+        <pre>{{ features.recommendation_text }}</pre>
+      {% else %}
+        <div class="small-note">OpenAI 추천이 비어있거나 해석이 꺼져있습니다.</div>
+      {% endif %}
+
+      {% if features.feature_candidates_rows and features.feature_candidates_rows|length > 0 %}
+        <div class="sub-title" style="margin-top:12px;">부정 토큰 기반 기능 후보</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:70%;">핵심 기능 후보(토큰)</th>
+              <th style="width:30%;">빈도</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in features.feature_candidates_rows %}
+              <tr>
+                <td>{{ row.keyword }}</td>
+                <td>{{ row.count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div class="section-title">7) 인사이트</div>
+    <div class="section-desc">전체 분석 결과를 요약하고 다음 액션을 제안합니다.</div>
+    <div class="sub-card">
+      <div class="sub-title">요약 포인트</div>
+      {% if report.insights and report.insights|length > 0 %}
+        <ul>
+          {% for s in report.insights %}
+            <li>{{ s }}</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="small-note">인사이트가 없습니다.</div>
+      {% endif %}
+
+      {% if report.final_openai_interpret_text %}
+        <div class="sub-title" style="margin-top:12px;">OpenAI 해석(인사이트)</div>
+        <pre>{{ report.final_openai_interpret_text }}</pre>
+      {% endif %}
+    </div>
+  </div>
+</body>
+</html>
+

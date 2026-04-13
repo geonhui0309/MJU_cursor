@@ -1,0 +1,5 @@
+streamlit
+pandas
+google-play-scraper
+jinja2
+weasyprint
