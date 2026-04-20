@@ -98,6 +98,55 @@ def search_app_candidates(query: str, lang: str, country: str, n_hits: int = 8) 
         return []
 
 
+def get_ranked_app_candidates(user_input: str, max_candidates: int = 8) -> List[Dict]:
+    """앱 이름 기준으로 중복 제거된 후보 목록을 반환."""
+    raw_query = user_input.strip()
+    if not raw_query:
+        return []
+
+    normalized_query = normalize_text(raw_query)
+    query_variants = [raw_query]
+    compact_query = re.sub(r"\s+", " ", raw_query).strip()
+    if compact_query and compact_query not in query_variants:
+        query_variants.append(compact_query)
+
+    search_scopes = [("ko", "kr"), ("ko", "us"), ("en", "kr"), ("en", "us")]
+    all_candidates: List[Dict] = []
+    seen_app_ids = set()
+
+    for query in query_variants:
+        for lang, country in search_scopes:
+            candidates = search_app_candidates(query=query, lang=lang, country=country, n_hits=max_candidates)
+            for item in candidates:
+                app_id = item.get("appId")
+                if app_id and app_id not in seen_app_ids:
+                    seen_app_ids.add(app_id)
+                    all_candidates.append(item)
+
+    if not all_candidates:
+        return []
+
+    exact_matches = [
+        item for item in all_candidates if normalize_text(item.get("title", "")) == normalized_query
+    ]
+    contains_matches = [
+        item for item in all_candidates if normalized_query in normalize_text(item.get("title", ""))
+    ]
+    remainder = [item for item in all_candidates if item not in exact_matches and item not in contains_matches]
+    ranked = exact_matches + contains_matches + remainder
+    return ranked[:max_candidates]
+
+
+def format_candidate_label(candidate: Dict) -> str:
+    """셀렉트박스에 표시할 후보 라벨 생성."""
+    title = candidate.get("title", "제목 없음")
+    app_id = candidate.get("appId", "appId 없음")
+    developer = candidate.get("developer", "개발자 정보 없음")
+    score = candidate.get("score")
+    score_text = f"{score:.1f}" if isinstance(score, (int, float)) else "-"
+    return f"{title} | {app_id} | {developer} | ★ {score_text}"
+
+
 def resolve_app_id(user_input: str) -> Tuple[str, str]:
     """앱 이름/URL/앱ID 입력을 앱ID로 해석하고 설명 텍스트를 반환."""
     direct_app_id = parse_app_id_from_input(user_input)
@@ -264,6 +313,10 @@ if "date_start" not in st.session_state:
     st.session_state.date_start = date.today() - timedelta(days=7)
 if "date_end" not in st.session_state:
     st.session_state.date_end = date.today()
+if "app_candidates" not in st.session_state:
+    st.session_state.app_candidates = []
+if "selected_candidate_index" not in st.session_state:
+    st.session_state.selected_candidate_index = 0
 
 
 # =========================
@@ -292,37 +345,68 @@ with reset_col1:
 
 
 # =========================
-# 7) 입력 폼 및 전송 버튼
+# 7) 입력 영역 / 후보 검색 / 전송 버튼
 # =========================
-with st.form("review_form", clear_on_submit=False):
-    app_input = st.text_input(
-        "앱 이름 / 앱 아이디 / Play Store URL",
-        placeholder="예: 카카오톡 또는 com.kakao.talk 또는 https://play.google.com/store/apps/details?id=com.kakao.talk&hl=ko",
-        help="앱 이름을 입력하면 자동으로 앱 아이디를 찾아 수집합니다.",
-    )
-    picked_dates = st.date_input(
-        "리뷰 수집 기간 (시작일 ~ 종료일)",
-        value=(st.session_state.date_start, st.session_state.date_end),
-    )
+app_input = st.text_input(
+    "앱 이름 / 앱 아이디 / Play Store URL",
+    placeholder="예: 카카오톡 또는 com.kakao.talk 또는 https://play.google.com/store/apps/details?id=com.kakao.talk&hl=ko",
+    help="앱 이름으로 후보를 검색한 뒤 원하는 앱을 선택해 수집할 수 있습니다.",
+)
+picked_dates = st.date_input(
+    "리뷰 수집 기간 (시작일 ~ 종료일)",
+    value=(st.session_state.date_start, st.session_state.date_end),
+)
 
-    selectable_columns = [
-        "리뷰 아이디",
-        "유저 이름",
-        "별점",
-        "내용",
-        "날짜",
-        "도움되요 수",
-        "앱버전",
-        "개발자 답변 내용",
-        "답변 일시",
-    ]
-    selected_columns = st.multiselect(
-        "수집할 항목 선택",
-        options=selectable_columns,
-        default=selectable_columns,
-        help="원하는 항목만 선택해 결과를 확인/다운로드할 수 있습니다.",
+selectable_columns = [
+    "리뷰 아이디",
+    "유저 이름",
+    "별점",
+    "내용",
+    "날짜",
+    "도움되요 수",
+    "앱버전",
+    "개발자 답변 내용",
+    "답변 일시",
+]
+selected_columns = st.multiselect(
+    "수집할 항목 선택",
+    options=selectable_columns,
+    default=selectable_columns,
+    help="원하는 항목만 선택해 결과를 확인/다운로드할 수 있습니다.",
+)
+
+btn_col1, btn_col2 = st.columns(2)
+with btn_col1:
+    search_candidates_clicked = st.button("후보 검색", use_container_width=True)
+with btn_col2:
+    submitted = st.button("전송", type="primary", use_container_width=True)
+
+if search_candidates_clicked:
+    direct_app_id = parse_app_id_from_input(app_input)
+    if not app_input.strip():
+        st.warning("앱 이름 또는 앱 아이디를 입력해 주세요.")
+    elif direct_app_id:
+        st.session_state.app_candidates = []
+        st.info(f"입력값에서 앱 아이디를 인식했습니다: {direct_app_id}")
+    else:
+        with st.spinner("앱 후보를 검색하는 중입니다..."):
+            candidates = get_ranked_app_candidates(app_input, max_candidates=8)
+        st.session_state.app_candidates = candidates
+        st.session_state.selected_candidate_index = 0
+        if candidates:
+            st.success(f"앱 후보 {len(candidates)}개를 찾았습니다.")
+        else:
+            st.warning("앱 이름으로 검색된 후보가 없습니다. 다른 키워드로 다시 시도해 주세요.")
+
+if st.session_state.app_candidates:
+    candidate_labels = [format_candidate_label(item) for item in st.session_state.app_candidates]
+    st.session_state.selected_candidate_index = st.selectbox(
+        "검색된 앱 후보",
+        options=range(len(candidate_labels)),
+        format_func=lambda idx: candidate_labels[idx],
+        index=min(st.session_state.selected_candidate_index, len(candidate_labels) - 1),
+        help="전송 시 선택된 후보의 앱 아이디로 리뷰를 수집합니다.",
     )
-    submitted = st.form_submit_button("전송", use_container_width=True)
 
 
 # =========================
@@ -354,7 +438,32 @@ if submitted:
     else:
         try:
             with st.spinner("리뷰를 불러오는 중입니다..."):
-                resolved_app_id, resolve_text = resolve_app_id(app_input.strip())
+                direct_app_id = parse_app_id_from_input(app_input.strip())
+                if direct_app_id:
+                    resolved_app_id = direct_app_id
+                    resolve_text = f"입력값에서 앱 아이디를 인식했습니다: {resolved_app_id}"
+                else:
+                    candidates = st.session_state.app_candidates
+                    if not candidates:
+                        candidates = get_ranked_app_candidates(app_input.strip(), max_candidates=8)
+                        st.session_state.app_candidates = candidates
+                        st.session_state.selected_candidate_index = 0
+
+                    if not candidates:
+                        raise ValueError("앱 이름으로 검색 결과를 찾지 못했습니다.")
+
+                    selected_idx = min(
+                        st.session_state.selected_candidate_index,
+                        len(candidates) - 1,
+                    )
+                    selected = candidates[selected_idx]
+                    resolved_app_id = selected.get("appId")
+                    if not resolved_app_id:
+                        raise ValueError("선택한 후보에서 앱 아이디를 확인하지 못했습니다.")
+                    resolve_text = (
+                        f"선택한 앱 후보로 수집합니다: {selected.get('title', '')} ({resolved_app_id})"
+                    )
+
                 raw_df = fetch_reviews_by_period(
                     app_id=resolved_app_id,
                     start_date=start_date,
