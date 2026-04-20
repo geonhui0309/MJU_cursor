@@ -7,8 +7,13 @@ from collections import Counter
 import streamlit as st
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from weasyprint import HTML as WeasyHTML
 from datetime import datetime
+
+try:
+    from weasyprint import HTML as WeasyHTML
+    WEASY_AVAILABLE = True
+except Exception:
+    WEASY_AVAILABLE = False
 
 # -------------------------
 # 페이지 상단: 제목/설명
@@ -1023,38 +1028,42 @@ if uploaded_file is not None:
         report = {"insights": insights[:10], "final_openai_interpret_text": final_interpret}
 
         cache_key = f"{uploaded_file.name}_{total_reviews}_{len(df.columns)}_{int(OPENAI_ENABLED)}"
-        if st.session_state.get("pdf_cache_key") != cache_key:
-            try:
-                template_dir = os.path.dirname(__file__)
-                template_path = os.path.join(template_dir, "report.html")
-                with open(template_path, "r", encoding="utf-8") as f:
-                    template_src = f.read()
+        if WEASY_AVAILABLE:
+            if st.session_state.get("pdf_cache_key") != cache_key:
+                try:
+                    template_dir = os.path.dirname(__file__)
+                    template_path = os.path.join(template_dir, "report.html")
+                    with open(template_path, "r", encoding="utf-8") as f:
+                        template_src = f.read()
 
-                env = Environment(
-                    autoescape=select_autoescape(["html", "xml"]),
-                )
-                template = env.from_string(template_src)
+                    env = Environment(
+                        autoescape=select_autoescape(["html", "xml"]),
+                    )
+                    template = env.from_string(template_src)
 
-                rendered_html = template.render(
-                    report_title=report_title,
-                    generated_at=generated_at,
-                    overview=overview,
-                    keywords=keywords,
-                    sentiment=sentiment,
-                    painpoints=painpoints,
-                    features=features,
-                    report=report,
-                )
+                    rendered_html = template.render(
+                        report_title=report_title,
+                        generated_at=generated_at,
+                        overview=overview,
+                        keywords=keywords,
+                        sentiment=sentiment,
+                        painpoints=painpoints,
+                        features=features,
+                        report=report,
+                    )
 
-                pdf_bytes = WeasyHTML(string=rendered_html, base_url=template_dir).write_pdf()
-                st.session_state["pdf_cache_key"] = cache_key
-                st.session_state["pdf_bytes"] = pdf_bytes
-            except Exception as e:
-                st.error("PDF 생성에 실패했습니다.")
-                st.code(str(e))
-                pdf_bytes = None
+                    pdf_bytes = WeasyHTML(string=rendered_html, base_url=template_dir).write_pdf()
+                    st.session_state["pdf_cache_key"] = cache_key
+                    st.session_state["pdf_bytes"] = pdf_bytes
+                except Exception as e:
+                    st.error("PDF 생성에 실패했습니다.")
+                    st.code(str(e))
+                    pdf_bytes = None
+            else:
+                pdf_bytes = st.session_state.get("pdf_bytes")
         else:
-            pdf_bytes = st.session_state.get("pdf_bytes")
+            st.warning("PDF 기능은 현재 서버에서 지원되지 않습니다.")
+            pdf_bytes = None
 
         if pdf_bytes:
             st.markdown(
