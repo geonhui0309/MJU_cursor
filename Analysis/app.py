@@ -1,8 +1,10 @@
 import os
 import re
 import json
+import io
 import urllib.request
 from collections import Counter
+from pathlib import Path
 
 import streamlit as st
 import pandas as pd
@@ -14,6 +16,10 @@ try:
     WEASY_AVAILABLE = True
 except Exception:
     WEASY_AVAILABLE = False
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+STORAGE_DIR = BASE_DIR / "Storage"
+STORAGE_DIR.mkdir(exist_ok=True)
 
 # -------------------------
 # 페이지 상단: 제목/설명
@@ -220,20 +226,48 @@ def call_openai_interpretation(section_name: str, payload_text: str):
         return None
 
 
-uploaded_file = st.file_uploader("CSV 파일을 업로드하세요.", type=["csv"])
+crawler_csv_bytes = st.session_state.get("crawler_latest_csv_bytes")
+crawler_csv_name = st.session_state.get("crawler_latest_csv_name", "crawler_reviews.csv")
+source_options = ["CSV 파일 업로드"]
+if crawler_csv_bytes:
+    source_options = ["탭1 리뷰 크롤링 결과 사용", "CSV 파일 업로드"]
 
-if uploaded_file is not None:
-    # -------------------------
-    # 업로드: pandas로 CSV 읽기
-    # -------------------------
+selected_source = st.radio(
+    "분석 데이터 선택",
+    options=source_options,
+    horizontal=True,
+)
+
+uploaded_file = None
+df = None
+source_name = ""
+
+if selected_source == "탭1 리뷰 크롤링 결과 사용":
     try:
-        df = pd.read_csv(uploaded_file)
+        df = pd.read_csv(io.BytesIO(crawler_csv_bytes))
+        source_name = crawler_csv_name
+        st.success(f"탭1에서 가져온 데이터를 불러왔습니다: {source_name}")
     except Exception as e:
-        st.error("CSV를 읽는 중 오류가 발생했습니다. 파일 인코딩/형식을 확인해주세요.")
+        st.error("탭1 데이터 로딩 중 오류가 발생했습니다. CSV 업로드로 시도해 주세요.")
         st.code(str(e))
         st.stop()
+else:
+    uploaded_file = st.file_uploader("CSV 파일을 업로드하세요.", type=["csv"])
+    if uploaded_file is not None:
+        # -------------------------
+        # 업로드: pandas로 CSV 읽기
+        # -------------------------
+        try:
+            df = pd.read_csv(uploaded_file)
+            source_name = uploaded_file.name
+        except Exception as e:
+            st.error("CSV를 읽는 중 오류가 발생했습니다. 파일 인코딩/형식을 확인해주세요.")
+            st.code(str(e))
+            st.stop()
 
-    st.success("CSV 파일이 성공적으로 업로드되었습니다.")
+        st.success("CSV 파일이 성공적으로 업로드되었습니다.")
+
+if df is not None:
 
     # -------------------------
     # 파일 정보 + 컬럼 매핑(영문/다른 이름도 자동 인식)
@@ -290,7 +324,7 @@ if uploaded_file is not None:
     info_cols = st.columns([1.2, 1, 1, 1])
     with info_cols[0]:
         st.markdown('<div class="kpi-card">', unsafe_allow_html=True)
-        st.metric("파일명", uploaded_file.name)
+        st.metric("파일명", source_name or "알 수 없음")
         st.markdown("</div>", unsafe_allow_html=True)
     with info_cols[1]:
         st.markdown('<div class="kpi-card">', unsafe_allow_html=True)
@@ -1027,7 +1061,7 @@ if uploaded_file is not None:
 
         report = {"insights": insights[:10], "final_openai_interpret_text": final_interpret}
 
-        cache_key = f"{uploaded_file.name}_{total_reviews}_{len(df.columns)}_{int(OPENAI_ENABLED)}"
+        cache_key = f"{source_name}_{total_reviews}_{len(df.columns)}_{int(OPENAI_ENABLED)}"
         if WEASY_AVAILABLE:
             if st.session_state.get("pdf_cache_key") != cache_key:
                 try:
@@ -1066,6 +1100,12 @@ if uploaded_file is not None:
             pdf_bytes = None
 
         if pdf_bytes:
+            pdf_filename = f"analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            pdf_save_sig = f"{cache_key}:{len(pdf_bytes)}"
+            if st.session_state.get("last_saved_analysis_pdf_sig") != pdf_save_sig:
+                (STORAGE_DIR / pdf_filename).write_bytes(pdf_bytes)
+                st.session_state["last_saved_analysis_pdf_sig"] = pdf_save_sig
+
             st.markdown(
                 """
 <div class="section-card">
@@ -1078,10 +1118,10 @@ if uploaded_file is not None:
             st.download_button(
                 label="PDF로 다운로드",
                 data=pdf_bytes,
-                file_name="review_analysis_report.pdf",
+                file_name=pdf_filename,
                 mime="application/pdf",
                 use_container_width=True,
             )
 else:
-    st.info("먼저 CSV 파일을 업로드해주세요.")
+    st.info("탭1 리뷰 크롤링 결과를 선택하거나 CSV 파일을 업로드해주세요.")
 

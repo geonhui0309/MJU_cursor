@@ -7,6 +7,7 @@ Google Play 앱 리뷰 수집 MVP (Streamlit 단일 파일 버전)
 # =========================
 import io
 import re
+from pathlib import Path
 from datetime import date, datetime, time, timedelta
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
@@ -14,6 +15,10 @@ from urllib.parse import parse_qs, urlparse
 import pandas as pd
 import streamlit as st
 from google_play_scraper import Sort, reviews, search
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+STORAGE_DIR = BASE_DIR / "Storage"
+STORAGE_DIR.mkdir(exist_ok=True)
 
 
 # =========================
@@ -319,6 +324,8 @@ if "selected_candidate_index" not in st.session_state:
     st.session_state.selected_candidate_index = 0
 if "last_candidate_query" not in st.session_state:
     st.session_state.last_candidate_query = ""
+if "last_saved_crawler_csv_sig" not in st.session_state:
+    st.session_state.last_saved_crawler_csv_sig = ""
 
 
 # =========================
@@ -477,6 +484,17 @@ if submitted:
             st.session_state.display_df = display_df
             st.session_state.last_count = len(raw_df)
             st.session_state.resolved_app_id = resolved_app_id
+            if not display_df.empty:
+                csv_bytes = to_csv_bytes(display_df)
+                saved_name = f"crawler_reviews_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                st.session_state["crawler_latest_csv_bytes"] = csv_bytes
+                st.session_state["crawler_latest_csv_name"] = saved_name
+                st.session_state["crawler_latest_source"] = "탭1 리뷰 크롤링 결과"
+
+                save_sig = f"{resolved_app_id}:{len(display_df)}:{start_date}:{end_date}:{hash(csv_bytes)}"
+                if st.session_state.last_saved_crawler_csv_sig != save_sig:
+                    (STORAGE_DIR / saved_name).write_bytes(csv_bytes)
+                    st.session_state.last_saved_crawler_csv_sig = save_sig
             st.info(resolve_text)
         except Exception as error:  # MVP 단계에서 사용자 안내를 위해 예외 메시지 표기
             st.session_state.last_error = (
