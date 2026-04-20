@@ -317,6 +317,8 @@ if "app_candidates" not in st.session_state:
     st.session_state.app_candidates = []
 if "selected_candidate_index" not in st.session_state:
     st.session_state.selected_candidate_index = 0
+if "last_candidate_query" not in st.session_state:
+    st.session_state.last_candidate_query = ""
 
 
 # =========================
@@ -345,12 +347,12 @@ with reset_col1:
 
 
 # =========================
-# 7) 입력 영역 / 후보 검색 / 전송 버튼
+# 7) 입력 영역 / 자동 후보 검색 / 전송 버튼
 # =========================
 app_input = st.text_input(
     "앱 이름 / 앱 아이디 / Play Store URL",
     placeholder="예: 카카오톡 또는 com.kakao.talk 또는 https://play.google.com/store/apps/details?id=com.kakao.talk&hl=ko",
-    help="앱 이름으로 후보를 검색한 뒤 원하는 앱을 선택해 수집할 수 있습니다.",
+    help="앱 이름을 입력하면 아래에 후보가 자동으로 표시됩니다.",
 )
 picked_dates = st.date_input(
     "리뷰 수집 기간 (시작일 ~ 종료일)",
@@ -375,28 +377,26 @@ selected_columns = st.multiselect(
     help="원하는 항목만 선택해 결과를 확인/다운로드할 수 있습니다.",
 )
 
-btn_col1, btn_col2 = st.columns(2)
-with btn_col1:
-    search_candidates_clicked = st.button("후보 검색", use_container_width=True)
-with btn_col2:
-    submitted = st.button("전송", type="primary", use_container_width=True)
+submitted = st.button("전송", type="primary", use_container_width=True)
 
-if search_candidates_clicked:
-    direct_app_id = parse_app_id_from_input(app_input)
-    if not app_input.strip():
-        st.warning("앱 이름 또는 앱 아이디를 입력해 주세요.")
-    elif direct_app_id:
+normalized_input = app_input.strip()
+if not normalized_input:
+    st.session_state.app_candidates = []
+    st.session_state.selected_candidate_index = 0
+    st.session_state.last_candidate_query = ""
+else:
+    direct_app_id = parse_app_id_from_input(normalized_input)
+    if direct_app_id:
         st.session_state.app_candidates = []
-        st.info(f"입력값에서 앱 아이디를 인식했습니다: {direct_app_id}")
-    else:
+        st.session_state.selected_candidate_index = 0
+        st.session_state.last_candidate_query = normalized_input
+        st.caption("앱 아이디/URL 형식이 인식되어 후보 검색을 생략합니다.")
+    elif st.session_state.last_candidate_query != normalized_input:
         with st.spinner("앱 후보를 검색하는 중입니다..."):
-            candidates = get_ranked_app_candidates(app_input, max_candidates=8)
+            candidates = get_ranked_app_candidates(normalized_input, max_candidates=8)
         st.session_state.app_candidates = candidates
         st.session_state.selected_candidate_index = 0
-        if candidates:
-            st.success(f"앱 후보 {len(candidates)}개를 찾았습니다.")
-        else:
-            st.warning("앱 이름으로 검색된 후보가 없습니다. 다른 키워드로 다시 시도해 주세요.")
+        st.session_state.last_candidate_query = normalized_input
 
 if st.session_state.app_candidates:
     candidate_labels = [format_candidate_label(item) for item in st.session_state.app_candidates]
@@ -407,6 +407,8 @@ if st.session_state.app_candidates:
         index=min(st.session_state.selected_candidate_index, len(candidate_labels) - 1),
         help="전송 시 선택된 후보의 앱 아이디로 리뷰를 수집합니다.",
     )
+elif normalized_input and not parse_app_id_from_input(normalized_input):
+    st.caption("검색된 앱 후보가 없습니다.")
 
 
 # =========================
