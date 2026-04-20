@@ -110,6 +110,29 @@ st.markdown(
     color: #60a5fa;
     margin-bottom: 0.65rem;
   }
+  .file-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .file-badge {
+    display: inline-block;
+    padding: 0.12rem 0.48rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .badge-csv {
+    color: #bfdbfe;
+    background: rgba(37, 99, 235, 0.22);
+    border: 1px solid rgba(96, 165, 250, 0.6);
+  }
+  .badge-pdf {
+    color: #fecaca;
+    background: rgba(220, 38, 38, 0.2);
+    border: 1px solid rgba(248, 113, 113, 0.6);
+  }
 </style>
 """,
     unsafe_allow_html=True,
@@ -192,7 +215,18 @@ else:
         for p in files:
             c1, c2, c3 = st.columns([3.5, 1.5, 1])
             with c1:
-                st.write(f"`{p.name}`")
+                file_ext = p.suffix.lower()
+                badge_class = "badge-pdf" if file_ext == ".pdf" else "badge-csv"
+                badge_label = "PDF" if file_ext == ".pdf" else "CSV"
+                st.markdown(
+                    f"""
+<div class="file-row">
+  <span class="file-badge {badge_class}">{badge_label}</span>
+  <span>`{p.name}`</span>
+</div>
+""",
+                    unsafe_allow_html=True,
+                )
             with c2:
                 st.caption(datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"))
             with c3:

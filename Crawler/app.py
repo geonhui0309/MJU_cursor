@@ -152,6 +152,14 @@ def format_candidate_label(candidate: Dict) -> str:
     return f"{title} | {app_id} | {developer} | ★ {score_text}"
 
 
+def sanitize_filename_part(text: str, default_value: str = "app") -> str:
+    """파일명에 안전한 문자열로 정규화."""
+    safe = re.sub(r'[\\/:*?"<>|]+', "_", str(text or "")).strip()
+    safe = re.sub(r"\s+", "_", safe)
+    safe = safe.strip("._")
+    return safe or default_value
+
+
 def resolve_app_id(user_input: str) -> Tuple[str, str]:
     """앱 이름/URL/앱ID 입력을 앱ID로 해석하고 설명 텍스트를 반환."""
     direct_app_id = parse_app_id_from_input(user_input)
@@ -312,6 +320,8 @@ if "last_error" not in st.session_state:
     st.session_state.last_error = ""
 if "resolved_app_id" not in st.session_state:
     st.session_state.resolved_app_id = ""
+if "resolved_app_title" not in st.session_state:
+    st.session_state.resolved_app_title = ""
 if "show_preview" not in st.session_state:
     st.session_state.show_preview = False
 if "date_start" not in st.session_state:
@@ -450,6 +460,7 @@ if submitted:
                 direct_app_id = parse_app_id_from_input(app_input.strip())
                 if direct_app_id:
                     resolved_app_id = direct_app_id
+                    resolved_app_title = resolved_app_id
                     resolve_text = f"입력값에서 앱 아이디를 인식했습니다: {resolved_app_id}"
                 else:
                     candidates = st.session_state.app_candidates
@@ -467,6 +478,7 @@ if submitted:
                     )
                     selected = candidates[selected_idx]
                     resolved_app_id = selected.get("appId")
+                    resolved_app_title = selected.get("title", resolved_app_id or "")
                     if not resolved_app_id:
                         raise ValueError("선택한 후보에서 앱 아이디를 확인하지 못했습니다.")
                     resolve_text = (
@@ -484,9 +496,12 @@ if submitted:
             st.session_state.display_df = display_df
             st.session_state.last_count = len(raw_df)
             st.session_state.resolved_app_id = resolved_app_id
+            st.session_state.resolved_app_title = resolved_app_title
             if not display_df.empty:
                 csv_bytes = to_csv_bytes(display_df)
-                saved_name = f"crawler_reviews_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                app_title_for_file = sanitize_filename_part(selected.get("title", "") if not direct_app_id else resolved_app_id)
+                period_for_file = f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
+                saved_name = f"{app_title_for_file}_{period_for_file}.csv"
                 st.session_state["crawler_latest_csv_bytes"] = csv_bytes
                 st.session_state["crawler_latest_csv_name"] = saved_name
                 st.session_state["crawler_latest_source"] = "탭1 리뷰 크롤링 결과"
@@ -517,21 +532,30 @@ elif submitted:
 # =========================
 if not st.session_state.display_df.empty:
     st.markdown("### 결과 활용")
-    col1, col2 = st.columns(2)
+    period_for_file = f"{st.session_state.date_start.strftime('%Y%m%d')}-{st.session_state.date_end.strftime('%Y%m%d')}"
+    app_for_file = sanitize_filename_part(
+        st.session_state.get("resolved_app_title") or st.session_state.get("resolved_app_id", ""),
+        default_value="reviews",
+    )
+    download_filename = f"{app_for_file}_{period_for_file}.csv"
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         if st.button("바로보기", use_container_width=True):
             st.session_state.show_preview = True
 
     with col2:
-        filename = f"google_play_reviews_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         st.download_button(
             "다운로드",
             data=to_csv_bytes(st.session_state.display_df),
-            file_name=filename,
+            file_name=download_filename,
             mime="text/csv",
             use_container_width=True,
         )
+    with col3:
+        if st.button("리뷰 분석하기", use_container_width=True):
+            st.session_state["nav_tab_index"] = 1
+            st.rerun()
 
     # 버튼 아래에서 전체 폭으로 테이블 표시
     if st.session_state.show_preview:
