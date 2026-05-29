@@ -248,10 +248,38 @@ def render_ai_settings() -> tuple[bool, str, str]:
     return enabled, api_key, model
 
 
-def _show_fig(fig) -> None:
+def _render_legend(legend: list[str]) -> None:
+    """차트 아래 번호·항목 목록 (한글은 브라우저 폰트로 표시)."""
+    if not legend:
+        return
+    st.markdown("**항목**")
+    for line in legend:
+        st.markdown(f"- {line}")
+
+
+def _show_fig(fig, legend: list[str] | None = None) -> None:
     if fig is not None:
         st.pyplot(fig, use_container_width=True)
         plt.close(fig)
+    _render_legend(legend or [])
+
+
+def _show_pie(data: pd.Series | pd.DataFrame, title: str = "") -> None:
+    if isinstance(data, pd.DataFrame):
+        pie_vals = data["건수"] if "건수" in data.columns else data.iloc[:, 0]
+    else:
+        pie_vals = data
+    fig, legend = viz.make_pie_figure(pie_vals, title)
+    _show_fig(fig, legend)
+
+
+def _show_bar_numbered(df: pd.DataFrame, height: int = 280) -> None:
+    """Streamlit 막대 차트 + 번호 범례."""
+    if df is None or df.empty:
+        return
+    numbered, legend = viz.numbered_index_df(df)
+    st.bar_chart(numbered, height=height)
+    _render_legend(legend)
 
 
 def render_analysis_dashboard(results: dict) -> None:
@@ -278,22 +306,22 @@ def render_analysis_dashboard(results: dict) -> None:
     with r1a:
         st.caption("리커트 평균")
         if not likert_df.empty:
-            _show_fig(viz.make_likert_horizontal_figure(likert_df))
+            fig, leg = viz.make_likert_horizontal_figure(likert_df)
+            _show_fig(fig, leg)
         else:
             st.info("리커트 문항 없음")
     with r1b:
         st.caption("감성 분포")
         sent_series = viz.sentiment_counts_df(sent_df)
         if not sent_series.empty:
-            pie_vals = sent_series["건수"] if "건수" in sent_series.columns else sent_series.iloc[:, 0]
-            _show_fig(viz.make_pie_figure(pie_vals, "감성"))
+            _show_pie(sent_series, "감성")
         else:
             st.info("감성 데이터 없음")
     with r1c:
         st.caption("데이터 정제")
         clean_s = viz.cleaning_counts_series(cleaning)
         if not clean_s.empty:
-            _show_fig(viz.make_pie_figure(clean_s, "응답 처리"))
+            _show_pie(clean_s, "응답 처리")
         else:
             st.info("정제 데이터 없음")
 
@@ -303,7 +331,7 @@ def render_analysis_dashboard(results: dict) -> None:
     with r2a:
         st.caption("상위 키워드 빈도")
         if not kw_chart.empty:
-            st.bar_chart(kw_chart, height=320)
+            _show_bar_numbered(kw_chart, height=320)
         else:
             st.info("키워드 없음")
     with r2b:
@@ -322,23 +350,22 @@ def render_analysis_dashboard(results: dict) -> None:
     with r3a:
         st.caption("여정 단계별 응답")
         if not journey_chart.empty:
-            st.bar_chart(journey_chart, height=280)
+            _show_bar_numbered(journey_chart, height=280)
         else:
             st.info("여정 매핑 없음")
     with r3b:
         st.caption("텍스트 구조 유형")
         ts = viz.text_structure_counts_df(text_df)
         if not ts.empty:
-            ts_vals = ts["건수"] if "건수" in ts.columns else ts.iloc[:, 0]
-            _show_fig(viz.make_pie_figure(ts_vals, "구조 유형"))
+            _show_pie(ts["건수"] if "건수" in ts.columns else ts.iloc[:, 0], "구조 유형")
         else:
             st.info("텍스트 구조 없음")
     with r3c:
         st.caption("선택형 문항 Top")
         choice_df = viz.choice_distribution_df(quant, max_questions=2)
         if choice_df is not None and not choice_df.empty:
-            pivot = choice_df.pivot(index="선택지", columns="문항", values="비율").fillna(0)
-            st.bar_chart(pivot, height=280)
+            fig, leg = viz.make_grouped_choice_figure(choice_df)
+            _show_fig(fig, leg)
         else:
             st.info("선택형 문항 없음")
 
@@ -347,7 +374,7 @@ def render_analysis_dashboard(results: dict) -> None:
         st.markdown("##### 가설 검증 요약")
         c1, c2 = st.columns([1, 2])
         with c1:
-            st.bar_chart(hyp_chart, height=220)
+            _show_bar_numbered(hyp_chart, height=220)
         with c2:
             hyp_cols = [c for c in ("가설", "지지 여부", "판단 근거") if c in hyp_df.columns]
             st.dataframe(hyp_df[hyp_cols].head(5), use_container_width=True, hide_index=True)
@@ -372,10 +399,11 @@ def render_quant_detail(results: dict) -> None:
                     if not dist_df.empty and "choice" in dist_df.columns:
                         chart_df = dist_df.set_index("choice")[["ratio"]]
                         chart_df.columns = ["비율(%)"]
-                        st.bar_chart(chart_df, height=260)
+                        _show_bar_numbered(chart_df, height=260)
                 elif res.get("type") == "리커트 척도형":
                     likert_one = viz.likert_summary_df({col: res})
-                    _show_fig(viz.make_likert_horizontal_figure(likert_one))
+                    fig, leg = viz.make_likert_horizontal_figure(likert_one)
+                    _show_fig(fig, leg)
                     st.caption(
                         f"평균 {res.get('mean')} · 긍정 {res.get('positive_pct')}% · "
                         f"부정 {res.get('negative_pct')}%"
@@ -407,15 +435,14 @@ def render_qual_keyword_detail(results: dict) -> None:
     with a:
         kw_chart = viz.keyword_chart_df(kw_df, top_n=15)
         if not kw_chart.empty:
-            st.bar_chart(kw_chart, height=340)
+            _show_bar_numbered(kw_chart, height=340)
         wc = viz.make_wordcloud_figure(kw_df)
         if wc:
             _show_fig(wc)
     with b:
         sent_series = viz.sentiment_counts_df(sent_df)
         if not sent_series.empty:
-            pie_vals = sent_series["건수"] if "건수" in sent_series.columns else sent_series.iloc[:, 0]
-            _show_fig(viz.make_pie_figure(pie_vals, "감성"))
+            _show_pie(sent_series, "감성")
         if sent_df is not None and not sent_df.empty:
             with st.expander("감성 상세 표"):
                 show_cols = [c for c in ["감성", "의미", "건수", "대표 응답"] if c in sent_df.columns]
@@ -426,15 +453,14 @@ def render_qual_keyword_detail(results: dict) -> None:
     with c1:
         jc = viz.journey_chart_df(results.get("journey_df"))
         if not jc.empty:
-            st.bar_chart(jc, height=300)
+            _show_bar_numbered(jc, height=300)
         jdf = results.get("journey_df")
         if jdf is not None and not jdf.empty:
             st.dataframe(jdf, use_container_width=True, hide_index=True)
     with c2:
         ts = viz.text_structure_counts_df(results.get("text_structure_df"))
         if not ts.empty:
-            ts_vals = ts["건수"] if "건수" in ts.columns else ts.iloc[:, 0]
-            _show_fig(viz.make_pie_figure(ts_vals, "텍스트 구조"))
+            _show_pie(ts["건수"] if "건수" in ts.columns else ts.iloc[:, 0], "텍스트 구조")
         tdf = results.get("text_structure_df")
         if tdf is not None and not tdf.empty:
             with st.expander("텍스트 구조 상세"):
@@ -726,7 +752,7 @@ def render_tab_input() -> None:
         with cc4:
             clean_s = viz.cleaning_counts_series(cleaning_summary)
             if not clean_s.empty:
-                _show_fig(viz.make_pie_figure(clean_s, "정제 유형"))
+                _show_pie(clean_s, "정제 유형")
         if not results["cleaning_log"].empty:
             with st.expander("정제 로그 상세"):
                 st.dataframe(results["cleaning_log"], use_container_width=True, hide_index=True)
@@ -770,7 +796,7 @@ def render_tab_analysis(results: dict) -> None:
             with h1:
                 hc = viz.hypothesis_verdict_df(hyp_df)
                 if not hc.empty:
-                    st.bar_chart(hc, height=240)
+                    _show_bar_numbered(hc, height=240)
             with h2:
                 st.dataframe(hyp_df, use_container_width=True, hide_index=True)
         else:
@@ -812,7 +838,7 @@ def render_tab_insights_storage(results: dict) -> None:
         with ac1:
             pri = act_df["우선순위"].value_counts() if "우선순위" in act_df.columns else None
             if pri is not None and not pri.empty:
-                st.bar_chart(pri.to_frame("건수"), height=220)
+                _show_bar_numbered(pri.to_frame("건수"), height=220)
         with ac2:
             st.dataframe(act_df, use_container_width=True, hide_index=True)
     else:
