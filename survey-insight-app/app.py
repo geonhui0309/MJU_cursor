@@ -587,8 +587,15 @@ def _render_service_research_block(results: dict) -> None:
         return
     with st.container(border=True):
         st.markdown("### 🌐 서비스·경쟁사 리서치")
+        meta = sr.get("meta") or {}
         if sr.get("search_ok"):
-            st.caption(f"웹 검색 스니펫 {len(sr.get('snippets', []))}건 반영")
+            cap = f"웹 검색 스니펫 {len(sr.get('snippets', []))}건 반영"
+            excluded = meta.get("excluded_count", 0)
+            if excluded:
+                cap += f" (무관 결과 {excluded}건 제외)"
+            if meta.get("ambiguous") and meta.get("canonical_name"):
+                cap += f" · 분석 대상: {meta['canonical_name']}"
+            st.caption(cap)
         st.markdown(report)
         if sr.get("snippets"):
             with st.expander("검색 출처 스니펫"):
