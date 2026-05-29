@@ -21,6 +21,25 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 STORAGE_DIR = BASE_DIR / "Storage"
 STORAGE_DIR.mkdir(exist_ok=True)
 
+SESSION_API_KEY = "openai_api_key_input"
+SESSION_MODEL = "openai_model_input"
+
+
+def get_openai_api_key() -> str:
+    env_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    return str(st.session_state.get(SESSION_API_KEY, "")).strip()
+
+
+def get_openai_model() -> str:
+    env_model = os.environ.get("OPENAI_MODEL", "").strip()
+    if env_model:
+        return env_model
+    model = str(st.session_state.get(SESSION_MODEL, "")).strip()
+    return model or "gpt-4o-mini"
+
+
 # -------------------------
 # 페이지 상단: 제목/설명
 # -------------------------
@@ -29,13 +48,48 @@ st.caption(
     "CSV 업로드 후 기본 분석 결과를 보고, OpenAI 해석을 통해 각 섹션의 의미를 더 깊게 이해할 수 있습니다."
 )
 
+_env_api_key = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+_env_model = bool(os.environ.get("OPENAI_MODEL", "").strip())
+_has_saved_key = bool(str(st.session_state.get(SESSION_API_KEY, "")).strip())
+
+with st.expander(
+    "OpenAI API 설정",
+    expanded=not (_env_api_key or _has_saved_key),
+):
+    if _env_api_key:
+        st.caption("환경변수 `OPENAI_API_KEY`가 설정되어 있어 해당 키가 우선 사용됩니다.")
+    else:
+        st.caption("API Key는 이 브라우저 세션에만 저장되며 서버 파일에는 기록되지 않습니다.")
+        st.text_input(
+            "OpenAI API Key",
+            type="password",
+            placeholder="sk-...",
+            key=SESSION_API_KEY,
+            help="https://platform.openai.com/api-keys 에서 발급한 키를 입력하세요.",
+        )
+
+    if SESSION_MODEL not in st.session_state:
+        st.session_state[SESSION_MODEL] = os.environ.get("OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini"
+
+    st.text_input(
+        "모델",
+        key=SESSION_MODEL,
+        disabled=_env_model,
+        help="예: gpt-4o-mini, gpt-4o",
+    )
+    if _env_model:
+        st.caption(f"환경변수 `OPENAI_MODEL` 적용 중: `{os.environ.get('OPENAI_MODEL')}`")
+
 # OpenAI 해석 기능 토글(키가 없어도 앱은 실행됩니다)
 OPENAI_ENABLED = False
-_api_key_present = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+_api_key_present = bool(get_openai_api_key())
 if _api_key_present:
     OPENAI_ENABLED = st.checkbox("OpenAI 해석 포함", value=True)
 else:
-    st.info("OpenAI 해석을 사용하려면 `OPENAI_API_KEY` 환경변수를 설정하세요. (기본 분석만 표시됩니다.)")
+    st.info(
+        "OpenAI 해석을 사용하려면 위 **OpenAI API 설정**에서 API Key를 입력하세요. "
+        "(환경변수 `OPENAI_API_KEY`를 설정해도 됩니다. 키가 없으면 기본 분석만 표시됩니다.)"
+    )
 
 # 카드형 레이아웃을 위한 간단한 스타일
 st.markdown(
@@ -156,17 +210,17 @@ def call_openai_interpretation(section_name: str, payload_text: str):
     """
     OpenAI API를 직접 HTTP로 호출합니다.
     - 별도 openai 패키지 설치가 필요 없습니다.
-    - OPENAI_API_KEY가 없으면 None을 반환합니다.
+    - API Key가 없으면 None을 반환합니다.
     """
     global OPENAI_ENABLED
     if not OPENAI_ENABLED:
         return None
 
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    api_key = get_openai_api_key()
     if not api_key:
         return None
 
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    model = get_openai_model()
 
     system_msg = (
         "너는 데이터 분석 리포트 해설 전문가다. "
@@ -913,7 +967,7 @@ if df is not None:
                 st.write(feat_interpret)
             else:
                 if feature_candidates:
-                    st.info("OpenAI 해석을 표시하려면 `OPENAI_API_KEY` 환경변수를 설정하세요.")
+                    st.info("OpenAI 해석을 표시하려면 상단 **OpenAI API 설정**에서 API Key를 입력하세요.")
                     st.write("대신, 부정 토큰 TOP10을 기능 후보로 간단히 나열합니다.")
                     feat_df = pd.DataFrame(feature_candidates, columns=["핵심 기능 후보(토큰)", "빈도"])
                     st.dataframe(feat_df.head(10), use_container_width=True, height=260)
