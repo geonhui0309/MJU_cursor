@@ -18,6 +18,7 @@ STORAGE_DIR = BASE_DIR.parent / "Storage"
 OUTPUT_DIR.mkdir(exist_ok=True)
 STORAGE_DIR.mkdir(exist_ok=True)
 
+from modules.ai_analyzer import get_api_key, run_ai_analysis
 from modules.cleaner import clean_data
 from modules.hypothesis_analysis import run_hypothesis_analysis
 from modules.insight_generator import generate_insights
@@ -46,6 +47,9 @@ st.set_page_config(
 
 DEFAULT_JOURNEY = ["인지", "진입", "탐색", "선택", "실행", "확인", "재사용", "이탈"]
 NAV_LABELS = ["탭1. 데이터 입력", "탭2. 분석 결과", "탭3. 인사이트·저장"]
+SESSION_API_KEY = "si_openai_api_key"
+SESSION_AI_ENABLED = "si_ai_enabled"
+SESSION_MODEL = "si_openai_model"
 
 # ─── 스타일 (리뷰 분석기와 유사한 다크 테마 + 상단 탭) ─────────
 st.markdown(
@@ -205,6 +209,51 @@ def _validate_inputs(uploaded, service_name, service_description, survey_purpose
     return None
 
 
+def render_ai_settings() -> tuple[bool, str, str]:
+    """탭1 OpenAI 설정 UI. Returns (enabled, api_key, model)."""
+    import os
+
+    env_key = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+    with st.expander("OpenAI AI 해석 (선택)", expanded=not env_key):
+        if env_key:
+            st.caption("환경변수 `OPENAI_API_KEY`가 설정되어 있습니다.")
+        else:
+            st.text_input(
+                "OpenAI API Key",
+                type="password",
+                placeholder="sk-...",
+                key=SESSION_API_KEY,
+                help="세션에만 저장됩니다. Streamlit Cloud는 Secrets에 OPENAI_API_KEY를 권장합니다.",
+            )
+        if SESSION_MODEL not in st.session_state:
+            st.session_state[SESSION_MODEL] = os.environ.get("OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini"
+        model = st.text_input("모델", key=SESSION_MODEL, disabled=bool(os.environ.get("OPENAI_MODEL", "").strip()))
+
+        api_key = get_api_key(st.session_state.get(SESSION_API_KEY, ""))
+        can_ai = bool(api_key)
+        if can_ai:
+            enabled = st.checkbox("분석 실행 시 OpenAI 해석 포함", value=True, key=SESSION_AI_ENABLED)
+        else:
+            st.info("API Key가 없으면 **규칙 기반 분석만** 실행됩니다.")
+            enabled = False
+    api_key = get_api_key(st.session_state.get(SESSION_API_KEY, ""))
+    model = st.session_state.get(SESSION_MODEL, "gpt-4o-mini")
+    if api_key and SESSION_AI_ENABLED not in st.session_state:
+        st.session_state[SESSION_AI_ENABLED] = True
+    enabled = bool(st.session_state.get(SESSION_AI_ENABLED, False)) if api_key else False
+    return enabled, api_key, model
+
+
+def _render_ai_block(results: dict, section_key: str, title: str | None = None) -> None:
+    """해당 섹션의 OpenAI 해석이 있으면 표시."""
+    ai = results.get("ai_interpretations") or {}
+    text = ai.get(section_key)
+    if text:
+        with st.container(border=True):
+            st.markdown(f"**🤖 OpenAI 해석** — {title or section_key}")
+            st.markdown(text)
+
+
 def run_pipeline(
     uploaded,
     service_name,
@@ -216,6 +265,9 @@ def run_pipeline(
     journey_input,
     focus_questions,
     exclude_questions,
+    ai_enabled: bool = False,
+    api_key: str = "",
+    ai_model: str = "gpt-4o-mini",
 ) -> dict | None:
     err = _validate_inputs(
         uploaded, service_name, service_description, survey_purpose, hypotheses
@@ -348,7 +400,7 @@ def run_pipeline(
     if pdf_path and Path(pdf_path).exists():
         (STORAGE_DIR / "insight_report.pdf").write_bytes(Path(pdf_path).read_bytes())
 
-    return {
+    result_bundle = {
         "df": df,
         "cleaned_df": cleaned_df,
         "basic": basic,
@@ -371,7 +423,18 @@ def run_pipeline(
         "html_path": html_path,
         "pdf_path": pdf_path,
         "context": context,
+        "ai_interpretations": {},
+        "ai_used": False,
     }
+
+    if ai_enabled and api_key:
+        ai_interp = run_ai_analysis(result_bundle, context, api_key, ai_model, enabled=True)
+        result_bundle["ai_interpretations"] = ai_interp
+        result_bundle["ai_used"] = any(v for v in ai_interp.values() if v)
+        if not result_bundle["ai_used"]:
+            st.warning("OpenAI 해석 생성에 실패했습니다. 규칙 기반 결과만 표시합니다.")
+
+    return result_bundle
 
 
 def render_tab_input() -> None:
@@ -405,11 +468,14 @@ def render_tab_input() -> None:
         with c2:
             exclude_questions = st.text_input("제외 문항", key="si_exclude_q")
 
+    ai_enabled, api_key, ai_model = render_ai_settings()
+
     st.markdown("")
-    run_btn = st.button("🔍 분석 실행", type="primary", use_container_width=True)
+    run_btn = st.button("🔍 분석 실행 (규칙 기반 + 선택 AI)", type="primary", use_container_width=True)
 
     if run_btn:
-        with st.spinner("분석 중..."):
+        msg = "규칙 기반 분석 및 OpenAI 해석 생성 중..." if (ai_enabled and api_key) else "규칙 기반 분석 중..."
+        with st.spinner(msg):
             results = run_pipeline(
                 uploaded,
                 service_name,
@@ -421,11 +487,15 @@ def render_tab_input() -> None:
                 journey_input,
                 focus_questions,
                 exclude_questions,
+                ai_enabled=ai_enabled,
+                api_key=api_key,
+                ai_model=ai_model,
             )
         if results:
             st.session_state["analysis_results"] = results
             st.session_state["nav_tab_index"] = 1
-            st.success("분석이 완료되었습니다. **탭2. 분석 결과**에서 확인하세요.")
+            ai_note = " (AI 해석 포함)" if results.get("ai_used") else ""
+            st.success(f"분석이 완료되었습니다{ai_note}. **탭2**에서 결과, **탭3**에서 인사이트를 확인하세요.")
             st.rerun()
 
     results = st.session_state.get("analysis_results")
@@ -462,7 +532,17 @@ def render_tab_input() -> None:
 
 
 def render_tab_analysis(results: dict) -> None:
-    """탭2: 정량·정성·텍스트 분석."""
+    """탭2: 정량·정성·텍스트 분석 + OpenAI 해석."""
+    if results.get("ai_used"):
+        st.success("OpenAI 해석이 포함되어 있습니다. 각 섹션 아래 🤖 블록을 확인하세요.")
+    else:
+        st.caption(
+            "현재 **규칙 기반 분석**만 표시됩니다. "
+            "탭1에서 OpenAI API Key를 입력하고 「OpenAI 해석 포함」을 켠 뒤 다시 분석 실행하세요."
+        )
+
+    _render_ai_block(results, "개요·데이터 품질", "개요·데이터 품질")
+
     st.subheader("정량 분석")
     for item in results["quant_interp"]:
         st.write(f"• {item['text']}")
@@ -480,6 +560,7 @@ def render_tab_analysis(results: dict) -> None:
         st.markdown("**교차 분석**")
         for c in cross:
             st.write(c.get("interpretation", ""))
+    _render_ai_block(results, "정량·교차 분석")
 
     st.subheader("정성 분석")
     integrated = results["qual_results"].get("integrated", {})
@@ -489,6 +570,7 @@ def render_tab_analysis(results: dict) -> None:
             st.write(data.get("summary", ""))
             for rep in data.get("representative_responses", []):
                 st.caption(f"ID {rep['response_id']}: {rep['text']}")
+    _render_ai_block(results, "정성 분석")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -509,15 +591,19 @@ def render_tab_analysis(results: dict) -> None:
         st.subheader("사용자 여정")
         if not results["journey_df"].empty:
             st.dataframe(results["journey_df"], use_container_width=True)
+    _render_ai_block(results, "키워드·감성")
 
     st.subheader("가설 검토")
     if not results["hypothesis_df"].empty:
         st.dataframe(results["hypothesis_df"], use_container_width=True)
+    _render_ai_block(results, "가설 검토")
 
 
 def render_tab_insights_storage(results: dict) -> None:
     """탭3: 인사이트·액션·다운로드·저장공간."""
-    st.subheader("핵심 인사이트")
+    _render_ai_block(results, "최종 AI 인사이트", "최종 AI 인사이트")
+
+    st.subheader("핵심 인사이트 (규칙 기반)")
     for ins in results["insights"]:
         with st.container(border=True):
             st.markdown(f"### {ins['인사이트 제목']}")
