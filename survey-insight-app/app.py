@@ -719,6 +719,10 @@ def run_pipeline(
         else "<p>리서치 없음</p>"
     )
 
+    # 리포트 생성 이전에 result_bundle에서 참조될 수 있으므로 초기화합니다.
+    html_path = None
+    pdf_path = None
+
     result_bundle = {
         "df": df,
         "cleaned_df": cleaned_df,
