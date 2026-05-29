@@ -9,12 +9,14 @@
     h2 { color: #334155; margin-top: 2rem; }
     .meta { background: #f1f5f9; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; }
     .insight-card { border-left: 4px solid #3b82f6; padding: 1rem; margin: 1rem 0; background: #f8fafc; }
+    .research-card { border-left: 4px solid #8b5cf6; padding: 1rem; margin: 1rem 0; background: #faf5ff; }
     .fact { color: #0369a1; }
     .interpretation { color: #7c3aed; }
     .action { color: #15803d; }
     table.data-table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
     table.data-table th, table.data-table td { border: 1px solid #e2e8f0; padding: 0.5rem; text-align: left; }
     table.data-table th { background: #f1f5f9; }
+    pre { font-family: inherit; font-size: 0.95rem; }
     footer { margin-top: 3rem; font-size: 0.85rem; color: #64748b; }
   </style>
 </head>
@@ -29,31 +31,44 @@
     <p><strong>데이터 신뢰도:</strong> {{ reliability }}</p>
   </div>
 
-  <h2>1. 데이터 품질 및 정제</h2>
+  <h2>1. 전체 응답자 핵심 사용 행태 (정량·정성 통합)</h2>
+  <div class="insight-card">
+    {{ behavior_summary_html | safe }}
+  </div>
+  {% if behavior_table_html %}
+  {{ behavior_table_html | safe }}
+  {% endif %}
+
+  <h2>2. 서비스·경쟁사 리서치</h2>
+  <div class="research-card">
+    {{ service_research_html | safe }}
+  </div>
+
+  <h2>3. 데이터 품질 및 정제</h2>
   {{ cleaning_summary_html | safe }}
 
-  <h2>2. 문항 구조</h2>
+  <h2>4. 문항 구조</h2>
   {{ schema_html | safe }}
 
-  <h2>3. 정량 분석</h2>
+  <h2>5. 정량 분석</h2>
   {% for interp in quant_interpretations %}
   <p>{{ interp }}</p>
   {% endfor %}
   {{ quant_html | safe }}
 
-  <h2>4. 키워드 분석</h2>
+  <h2>6. 키워드 분석</h2>
   {{ keyword_html | safe }}
 
-  <h2>5. 감성 분석</h2>
+  <h2>7. 감성 분석</h2>
   {{ sentiment_html | safe }}
 
-  <h2>6. 사용자 여정 매핑</h2>
+  <h2>8. 사용자 여정 매핑</h2>
   {{ journey_html | safe }}
 
-  <h2>7. 가설 검토</h2>
+  <h2>9. 가설 검토</h2>
   {{ hypothesis_html | safe }}
 
-  <h2>8. 핵심 인사이트</h2>
+  <h2>10. 핵심 인사이트</h2>
   {% for ins in insights %}
   <div class="insight-card">
     <h3>{{ ins['인사이트 제목'] }}</h3>
@@ -64,10 +79,15 @@
   </div>
   {% endfor %}
 
-  <h2>9. 개선 액션 아이템</h2>
+  {% if ai_report_html %}
+  <h2>11. AI 종합 인사이트</h2>
+  {{ ai_report_html | safe }}
+  {% endif %}
+
+  <h2>12. 개선 액션 아이템</h2>
   {{ actions_html | safe }}
 
-  <h2>10. 후속 리서치 제안</h2>
+  <h2>13. 후속 리서치 제안</h2>
   <ul>
   {% for item in follow_up %}
     <li>{{ item }}</li>

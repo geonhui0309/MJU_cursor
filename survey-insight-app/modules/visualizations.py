@@ -96,6 +96,27 @@ def numbered_labels(labels: list[str], max_len: int = 80) -> tuple[list[str], li
     return short, legend
 
 
+def numbered_labels_with_pct(
+    labels: list[str], values: list[float], max_len: int = 60, as_ratio: bool = False
+) -> list[str]:
+    """
+    범례 전용: '1. 무응답 (40%)' 형식.
+    as_ratio=True 이면 values가 이미 0~100 비율(%)로 간주.
+    """
+    total = sum(values) if values else 0
+    legend: list[str] = []
+    for i, (raw, val) in enumerate(zip(labels, values), start=1):
+        text = str(raw).strip() or f"항목 {i}"
+        if len(text) > max_len:
+            text = text[: max_len - 1] + "…"
+        if as_ratio:
+            pct = float(val)
+        else:
+            pct = (float(val) / total * 100) if total else 0
+        legend.append(f"{i}. {text} ({pct:.0f}%)")
+    return legend
+
+
 def _style_axes(ax, title: str = "") -> None:
     fig = ax.figure
     fig.patch.set_facecolor("#0f172a")
@@ -158,12 +179,17 @@ def keyword_chart_df(keyword_df: pd.DataFrame, top_n: int = 12) -> pd.DataFrame:
     return df.set_index("키워드")
 
 
-def numbered_index_df(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-    """인덱스를 1,2,3… 으로 바꾸고 범례 문장 반환."""
+def numbered_index_df(df: pd.DataFrame, with_pct: bool = True) -> tuple[pd.DataFrame, list[str]]:
+    """인덱스를 1,2,3… 으로 바꾸고 범례에 '1. 항목 (40%)' 형식."""
     if df is None or df.empty:
         return df, []
     labels = [str(x) for x in df.index.tolist()]
-    short, legend = numbered_labels(labels)
+    values = df.iloc[:, 0].tolist() if df.shape[1] >= 1 else []
+    if with_pct and values:
+        legend = numbered_labels_with_pct(labels, values)
+    else:
+        _, legend = numbered_labels(labels)
+    short = [str(i + 1) for i in range(len(labels))]
     out = df.copy()
     out.index = short
     return out, legend
@@ -234,8 +260,8 @@ def make_wordcloud_figure(keyword_df: pd.DataFrame) -> plt.Figure | None:
 
     font_path = ensure_korean_font()
     wc_kwargs: dict[str, Any] = dict(
-        width=900,
-        height=420,
+        width=560,
+        height=260,
         background_color="#0f172a",
         colormap="Blues",
         max_words=60,
@@ -247,7 +273,7 @@ def make_wordcloud_figure(keyword_df: pd.DataFrame) -> plt.Figure | None:
 
     wc = WordCloud(**wc_kwargs).generate_from_frequencies(freq)
 
-    fig, ax = plt.subplots(figsize=(10, 4.2))
+    fig, ax = plt.subplots(figsize=(5.5, 2.6))
     ax.imshow(wc, interpolation="bilinear")
     ax.axis("off")
     fig.patch.set_facecolor("#0f172a")
@@ -264,11 +290,11 @@ def make_likert_horizontal_figure(likert_df: pd.DataFrame) -> tuple[plt.Figure |
     labels = likert_df["문항"].astype(str).tolist()
     short, legend = numbered_labels(labels)
 
-    fig, ax = plt.subplots(figsize=(10, max(2.2, len(likert_df) * 0.45)))
+    fig, ax = plt.subplots(figsize=(5.5, max(1.6, len(likert_df) * 0.32)))
     y = range(len(likert_df))
-    ax.barh(y, likert_df["평균"], color=CHART_COLORS[0], height=0.5)
+    ax.barh(y, likert_df["평균"], color=CHART_COLORS[0], height=0.45)
     ax.set_yticks(y)
-    ax.set_yticklabels(short, fontsize=10)
+    ax.set_yticklabels(short, fontsize=8)
     ax.set_xlim(0, 5.5)
     ax.set_xlabel("Average (1-5)", fontsize=9)
     _style_axes(ax, "Likert mean")
@@ -278,29 +304,26 @@ def make_likert_horizontal_figure(likert_df: pd.DataFrame) -> tuple[plt.Figure |
 
 
 def make_pie_figure(series: pd.Series, title: str = "") -> tuple[plt.Figure | None, list[str]]:
-    """파이 차트 — 슬라이스는 번호만, 범례는 호출측에서 표시."""
+    """파이 차트 — 그래프에는 숫자/라벨 없음, 범례에 '1. 항목 (40%)'."""
     if series is None or series.empty or series.sum() == 0:
         return None, []
 
-    ensure_korean_font()
     labels = [str(x) for x in series.index.tolist()]
-    short, legend = numbered_labels(labels)
-    values = series.values
+    values = [float(v) for v in series.values]
+    legend = numbered_labels_with_pct(labels, values)
 
-    fig, ax = plt.subplots(figsize=(4.2, 3.8))
-    _, _, autotexts = ax.pie(
+    fig, ax = plt.subplots(figsize=(2.6, 2.6))
+    ax.pie(
         values,
-        labels=short,
-        autopct="%1.0f%%",
+        labels=None,
+        autopct=None,
         startangle=90,
         colors=CHART_COLORS[: len(values)],
-        textprops={"color": "#e2e8f0", "fontsize": 9},
-        pctdistance=0.75,
+        wedgeprops={"linewidth": 0.6, "edgecolor": "#0f172a"},
     )
-    for t in autotexts:
-        t.set_fontsize(8)
-    _style_axes(ax, title or "Distribution")
-    plt.tight_layout()
+    _style_axes(ax, title or "")
+    ax.set_title(title or "", fontsize=9, color="#e2e8f0", pad=4)
+    plt.tight_layout(pad=0.3)
     return fig, legend
 
 
@@ -309,17 +332,20 @@ def make_grouped_choice_figure(choice_df: pd.DataFrame) -> tuple[plt.Figure | No
     if choice_df is None or choice_df.empty:
         return None, []
 
-    ensure_korean_font()
-    row_labels = [
-        f"{row['문항']} / {row['선택지']}" for _, row in choice_df.iterrows()
-    ]
-    short, legend = numbered_labels(row_labels, max_len=100)
+    row_labels = [f"{row['선택지']}" for _, row in choice_df.iterrows()]
+    legend = numbered_labels_with_pct(
+        row_labels,
+        choice_df["비율"].tolist(),
+        max_len=55,
+        as_ratio=True,
+    )
+    short = [str(i + 1) for i in range(len(choice_df))]
 
-    fig, ax = plt.subplots(figsize=(10, max(2.5, len(choice_df) * 0.35)))
+    fig, ax = plt.subplots(figsize=(5.5, max(1.5, len(choice_df) * 0.28)))
     y = range(len(choice_df))
-    ax.barh(y, choice_df["비율"], color=CHART_COLORS[2], height=0.55)
+    ax.barh(y, choice_df["비율"], color=CHART_COLORS[2], height=0.5)
     ax.set_yticks(y)
-    ax.set_yticklabels(short, fontsize=9)
+    ax.set_yticklabels(short, fontsize=8)
     ax.set_xlabel("Ratio (%)", fontsize=9)
     _style_axes(ax, "Choice distribution")
     plt.tight_layout()

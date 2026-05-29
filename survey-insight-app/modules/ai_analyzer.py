@@ -94,10 +94,14 @@ def build_payloads(results: dict[str, Any], context: dict[str, Any]) -> dict[str
 
     overview_lines = [
         f"서비스: {context.get('service_name', '')}",
+        f"서비스 설명: {context.get('service_description', '')}",
         f"설문 목적: {context.get('survey_purpose', '')}",
         f"가설: {context.get('hypotheses', '')}",
         f"타깃: {context.get('target_users', '')}",
     ]
+    sr = context.get("service_research") or {}
+    if sr.get("report"):
+        payloads["서비스·경쟁 리서치"] = sr["report"][:4000]
     basic = results.get("basic", {})
     cleaning = results.get("cleaning_summary", {})
     overview_lines.extend(
@@ -143,6 +147,12 @@ def build_payloads(results: dict[str, Any], context: dict[str, Any]) -> dict[str
             f"- {ins.get('인사이트 제목')}: {ins.get('Fact', '')[:100]}"
         )
     payloads["규칙 기반 인사이트 초안"] = "\n".join(ins_lines) or "(없음)"
+
+    bp = results.get("behavior_summary") or {}
+    if bp.get("summary_text"):
+        payloads["핵심 사용 행태"] = bp["summary_text"][:3500]
+    if bp.get("ai_narrative"):
+        payloads["핵심 사용 행태 (AI)"] = bp["ai_narrative"][:3500]
 
     return payloads
 

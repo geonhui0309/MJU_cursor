@@ -4,6 +4,7 @@ Google Forms CSV 기반 설문조사 인사이트 도출 Streamlit 앱
 
 from __future__ import annotations
 
+import html as html_module
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,8 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 STORAGE_DIR.mkdir(exist_ok=True)
 
 from modules.ai_analyzer import get_api_key, run_ai_analysis
+from modules.behavior_summary import enhance_behaviors_with_ai, summarize_usage_behaviors
+from modules.service_research import run_service_research
 from modules.cleaner import clean_data
 from modules.hypothesis_analysis import run_hypothesis_analysis
 from modules.insight_generator import generate_insights
@@ -51,6 +54,7 @@ DEFAULT_JOURNEY = ["인지", "진입", "탐색", "선택", "실행", "확인", "
 NAV_LABELS = ["탭1. 데이터 입력", "탭2. 분석 결과", "탭3. 인사이트·저장"]
 SESSION_API_KEY = "si_openai_api_key"
 SESSION_AI_ENABLED = "si_ai_enabled"
+SESSION_RESEARCH_ENABLED = "si_research_enabled"
 SESSION_MODEL = "si_openai_model"
 
 # ─── 스타일 (리뷰 분석기와 유사한 다크 테마 + 상단 탭) ─────────
@@ -213,7 +217,7 @@ def _validate_inputs(uploaded, service_name, service_description, survey_purpose
     return None
 
 
-def render_ai_settings() -> tuple[bool, str, str]:
+def render_ai_settings() -> tuple[bool, str, str, bool]:
     """탭1 OpenAI 설정 UI. Returns (enabled, api_key, model)."""
     import os
 
@@ -240,12 +244,23 @@ def render_ai_settings() -> tuple[bool, str, str]:
         else:
             st.info("API Key가 없으면 **규칙 기반 분석만** 실행됩니다.")
             enabled = False
+
+        if SESSION_RESEARCH_ENABLED not in st.session_state:
+            st.session_state[SESSION_RESEARCH_ENABLED] = True
+        st.checkbox(
+            "서비스·경쟁사 웹 리서치 포함 (검색+AI 리포트)",
+            value=st.session_state.get(SESSION_RESEARCH_ENABLED, True),
+            key=SESSION_RESEARCH_ENABLED,
+            help="서비스명으로 웹 검색합니다. AI 종합 리포트는 API Key가 있을 때 생성됩니다.",
+        )
+
     api_key = get_api_key(st.session_state.get(SESSION_API_KEY, ""))
     model = st.session_state.get(SESSION_MODEL, "gpt-4o-mini")
     if api_key and SESSION_AI_ENABLED not in st.session_state:
         st.session_state[SESSION_AI_ENABLED] = True
     enabled = bool(st.session_state.get(SESSION_AI_ENABLED, False)) if api_key else False
-    return enabled, api_key, model
+    research = bool(st.session_state.get(SESSION_RESEARCH_ENABLED, False))
+    return enabled, api_key, model, research
 
 
 def _render_legend(legend: list[str]) -> None:
@@ -273,7 +288,7 @@ def _show_pie(data: pd.Series | pd.DataFrame, title: str = "") -> None:
     _show_fig(fig, legend)
 
 
-def _show_bar_numbered(df: pd.DataFrame, height: int = 280) -> None:
+def _show_bar_numbered(df: pd.DataFrame, height: int = 160) -> None:
     """Streamlit 막대 차트 + 번호 범례."""
     if df is None or df.empty:
         return
@@ -299,6 +314,8 @@ def render_analysis_dashboard(results: dict) -> None:
     m3.metric("분석 포함", cleaning["included_count"])
     m4.metric("신뢰도", cleaning["reliability"])
     m5.metric("핵심 키워드", len(kw_df) if kw_df is not None and not kw_df.empty else 0)
+
+    _render_behavior_summary_block(results)
 
     st.markdown("##### 핵심 지표")
     r1a, r1b, r1c = st.columns(3)
@@ -331,7 +348,7 @@ def render_analysis_dashboard(results: dict) -> None:
     with r2a:
         st.caption("상위 키워드 빈도")
         if not kw_chart.empty:
-            _show_bar_numbered(kw_chart, height=320)
+            _show_bar_numbered(kw_chart, height=150)
         else:
             st.info("키워드 없음")
     with r2b:
@@ -350,7 +367,7 @@ def render_analysis_dashboard(results: dict) -> None:
     with r3a:
         st.caption("여정 단계별 응답")
         if not journey_chart.empty:
-            _show_bar_numbered(journey_chart, height=280)
+            _show_bar_numbered(journey_chart, height=140)
         else:
             st.info("여정 매핑 없음")
     with r3b:
@@ -374,7 +391,7 @@ def render_analysis_dashboard(results: dict) -> None:
         st.markdown("##### 가설 검증 요약")
         c1, c2 = st.columns([1, 2])
         with c1:
-            _show_bar_numbered(hyp_chart, height=220)
+            _show_bar_numbered(hyp_chart, height=130)
         with c2:
             hyp_cols = [c for c in ("가설", "지지 여부", "판단 근거") if c in hyp_df.columns]
             st.dataframe(hyp_df[hyp_cols].head(5), use_container_width=True, hide_index=True)
@@ -399,7 +416,7 @@ def render_quant_detail(results: dict) -> None:
                     if not dist_df.empty and "choice" in dist_df.columns:
                         chart_df = dist_df.set_index("choice")[["ratio"]]
                         chart_df.columns = ["비율(%)"]
-                        _show_bar_numbered(chart_df, height=260)
+                        _show_bar_numbered(chart_df, height=140)
                 elif res.get("type") == "리커트 척도형":
                     likert_one = viz.likert_summary_df({col: res})
                     fig, leg = viz.make_likert_horizontal_figure(likert_one)
@@ -435,7 +452,7 @@ def render_qual_keyword_detail(results: dict) -> None:
     with a:
         kw_chart = viz.keyword_chart_df(kw_df, top_n=15)
         if not kw_chart.empty:
-            _show_bar_numbered(kw_chart, height=340)
+            _show_bar_numbered(kw_chart, height=150)
         wc = viz.make_wordcloud_figure(kw_df)
         if wc:
             _show_fig(wc)
@@ -453,7 +470,7 @@ def render_qual_keyword_detail(results: dict) -> None:
     with c1:
         jc = viz.journey_chart_df(results.get("journey_df"))
         if not jc.empty:
-            _show_bar_numbered(jc, height=300)
+            _show_bar_numbered(jc, height=140)
         jdf = results.get("journey_df")
         if jdf is not None and not jdf.empty:
             st.dataframe(jdf, use_container_width=True, hide_index=True)
@@ -472,6 +489,59 @@ def render_qual_keyword_detail(results: dict) -> None:
             st.write(data.get("summary", ""))
             for rep in data.get("representative_responses", [])[:3]:
                 st.caption(f"ID {rep['response_id']}: {rep['text']}")
+
+
+def _render_behavior_summary_block(results: dict) -> None:
+    """전체 응답자 핵심 사용 행태 (정성+정량 통합)."""
+    bp = results.get("behavior_summary") or {}
+    if not bp.get("behaviors") and not bp.get("summary_text"):
+        return
+    with st.container(border=True):
+        st.markdown("### 👥 전체 응답자 핵심 사용 행태")
+        st.caption(
+            f"정량·정성 데이터 통합 · 전체 {bp.get('total_responses', '-')}명 기준"
+        )
+        if bp.get("ai_narrative"):
+            st.markdown(bp["ai_narrative"])
+        else:
+            st.markdown(bp.get("summary_text", "").replace("\n", "\n\n"))
+        export_df = bp.get("export_df")
+        if export_df is not None and not export_df.empty:
+            st.dataframe(
+                export_df[
+                    [
+                        c
+                        for c in (
+                            "행태 유형",
+                            "핵심 행태",
+                            "정량 근거",
+                            "정성 근거",
+                            "여정 단계",
+                            "관련 문항",
+                        )
+                        if c in export_df.columns
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
+def _render_service_research_block(results: dict) -> None:
+    """서비스·경쟁사 웹 리서치 결과."""
+    sr = results.get("service_research") or {}
+    report = sr.get("report")
+    if not report:
+        return
+    with st.container(border=True):
+        st.markdown("### 🌐 서비스·경쟁사 리서치")
+        if sr.get("search_ok"):
+            st.caption(f"웹 검색 스니펫 {len(sr.get('snippets', []))}건 반영")
+        st.markdown(report)
+        if sr.get("snippets"):
+            with st.expander("검색 출처 스니펫"):
+                for i, s in enumerate(sr["snippets"][:8], 1):
+                    st.markdown(f"**{i}. {s.get('title', '')}**  \n{s.get('snippet', '')[:300]}")
 
 
 def _render_ai_block(results: dict, section_key: str, title: str | None = None) -> None:
@@ -498,6 +568,7 @@ def run_pipeline(
     ai_enabled: bool = False,
     api_key: str = "",
     ai_model: str = "gpt-4o-mini",
+    research_enabled: bool = True,
 ) -> dict | None:
     err = _validate_inputs(
         uploaded, service_name, service_description, survey_purpose, hypotheses
@@ -576,6 +647,46 @@ def run_pipeline(
         context, quant_results, qual_results, keyword_df, journey_df, hypothesis_df, cleaning_summary
     )
 
+    behavior_summary = summarize_usage_behaviors(
+        quant_results,
+        qual_results,
+        keyword_df,
+        journey_df,
+        sentiment_df,
+        schema_df,
+        cleaning_summary,
+        basic["total_responses"],
+    )
+    bdf_out = behavior_summary.get("export_df")
+    if bdf_out is not None and not bdf_out.empty:
+        save_dataframe(bdf_out, "behavior_summary.csv")
+
+    survey_summary_parts = [item.get("text", "") for item in quant_interp[:6]]
+    if keyword_df is not None and not keyword_df.empty:
+        survey_summary_parts.append(
+            "키워드: " + ", ".join(keyword_df["키워드"].head(8).astype(str).tolist())
+        )
+    for ins in insights[:4]:
+        survey_summary_parts.append(f"{ins.get('인사이트 제목')}: {ins.get('Fact', '')[:120]}")
+    survey_summary = "\n".join(survey_summary_parts)
+
+    service_research = run_service_research(
+        service_name=str(service_name),
+        service_description=str(service_description),
+        survey_purpose=str(survey_purpose),
+        known_problems=str(known_problems or ""),
+        survey_summary=survey_summary,
+        api_key=api_key,
+        model=ai_model,
+        enabled=research_enabled,
+    )
+    context["service_research"] = service_research
+
+    if ai_enabled and api_key:
+        ai_behavior = enhance_behaviors_with_ai(behavior_summary, context, api_key, ai_model)
+        if ai_behavior:
+            behavior_summary["ai_narrative"] = ai_behavior
+
     tables = dataframes_to_html_tables(
         {
             "schema": schema_df,
@@ -600,35 +711,13 @@ def run_pipeline(
     actions_df = pd.DataFrame(actions)
     save_dataframe(actions_df, "action_items.csv")
 
-    report_ctx = {
-        "service_name": service_name,
-        "service_description": service_description,
-        "survey_purpose": survey_purpose,
-        "hypotheses": hypotheses,
-        "response_count": basic["total_responses"],
-        "question_count": basic["total_questions"],
-        "reliability": cleaning_summary["reliability"],
-        "cleaning_summary_html": cleaning_summary_html,
-        "schema_html": tables.get("schema", ""),
-        "quant_html": tables.get("quant", ""),
-        "keyword_html": tables.get("keyword", ""),
-        "sentiment_html": sentiment_df.to_html(index=False) if not sentiment_df.empty else "<p>없음</p>",
-        "journey_html": tables.get("journey", ""),
-        "hypothesis_html": tables.get("hypothesis", ""),
-        "quant_interpretations": [i["text"] for i in quant_interp],
-        "insights": insights,
-        "actions_html": actions_df.to_html(index=False) if not actions_df.empty else "<p>없음</p>",
-        "follow_up": follow_up,
-    }
-
-    _, html_path = generate_html_report(report_ctx)
-    pdf_path = generate_pdf_report(html_path)
-
-    # 리포트를 Storage에도 복사
-    if html_path and Path(html_path).exists():
-        (STORAGE_DIR / "insight_report.html").write_bytes(Path(html_path).read_bytes())
-    if pdf_path and Path(pdf_path).exists():
-        (STORAGE_DIR / "insight_report.pdf").write_bytes(Path(pdf_path).read_bytes())
+    sr_report = service_research.get("report") or ""
+    esc_sr = html_module.escape(sr_report)
+    service_research_html = (
+        f"<div class='insight-card'><pre style='white-space:pre-wrap'>{esc_sr}</pre></div>"
+        if sr_report
+        else "<p>리서치 없음</p>"
+    )
 
     result_bundle = {
         "df": df,
@@ -653,6 +742,8 @@ def run_pipeline(
         "html_path": html_path,
         "pdf_path": pdf_path,
         "context": context,
+        "service_research": service_research,
+        "behavior_summary": behavior_summary,
         "ai_interpretations": {},
         "ai_used": False,
     }
@@ -663,6 +754,58 @@ def run_pipeline(
         result_bundle["ai_used"] = any(v for v in ai_interp.values() if v)
         if not result_bundle["ai_used"]:
             st.warning("OpenAI 해석 생성에 실패했습니다. 규칙 기반 결과만 표시합니다.")
+
+    beh_text = behavior_summary.get("ai_narrative") or behavior_summary.get("summary_text") or ""
+    behavior_summary_html = (
+        f"<div class='insight-card'><pre style='white-space:pre-wrap'>{html_module.escape(beh_text)}</pre></div>"
+        if beh_text
+        else "<p>없음</p>"
+    )
+    behavior_table_html = ""
+    bdf = behavior_summary.get("export_df")
+    if bdf is not None and not bdf.empty:
+        behavior_table_html = bdf.to_html(index=False, classes="data-table", border=0)
+
+    report_ctx = {
+        "service_name": service_name,
+        "service_description": service_description,
+        "survey_purpose": survey_purpose,
+        "hypotheses": hypotheses,
+        "response_count": basic["total_responses"],
+        "question_count": basic["total_questions"],
+        "reliability": cleaning_summary["reliability"],
+        "behavior_summary_html": behavior_summary_html,
+        "behavior_table_html": behavior_table_html,
+        "service_research_html": service_research_html,
+        "cleaning_summary_html": cleaning_summary_html,
+        "schema_html": tables.get("schema", ""),
+        "quant_html": tables.get("quant", ""),
+        "keyword_html": tables.get("keyword", ""),
+        "sentiment_html": sentiment_df.to_html(index=False) if not sentiment_df.empty else "<p>없음</p>",
+        "journey_html": tables.get("journey", ""),
+        "hypothesis_html": tables.get("hypothesis", ""),
+        "quant_interpretations": [i["text"] for i in quant_interp],
+        "insights": insights,
+        "actions_html": actions_df.to_html(index=False) if not actions_df.empty else "<p>없음</p>",
+        "follow_up": follow_up,
+        "ai_report_html": "",
+    }
+    ai_final = result_bundle.get("ai_interpretations", {}).get("최종 AI 인사이트")
+    if ai_final:
+        report_ctx["ai_report_html"] = (
+            f"<div class='insight-card'><pre style='white-space:pre-wrap'>"
+            f"{html_module.escape(ai_final)}</pre></div>"
+        )
+
+    _, html_path = generate_html_report(report_ctx)
+    pdf_path = generate_pdf_report(html_path)
+    result_bundle["html_path"] = html_path
+    result_bundle["pdf_path"] = pdf_path
+
+    if html_path and Path(html_path).exists():
+        (STORAGE_DIR / "insight_report.html").write_bytes(Path(html_path).read_bytes())
+    if pdf_path and Path(pdf_path).exists():
+        (STORAGE_DIR / "insight_report.pdf").write_bytes(Path(pdf_path).read_bytes())
 
     return result_bundle
 
@@ -698,13 +841,13 @@ def render_tab_input() -> None:
         with c2:
             exclude_questions = st.text_input("제외 문항", key="si_exclude_q")
 
-    ai_enabled, api_key, ai_model = render_ai_settings()
+    ai_enabled, api_key, ai_model, research_enabled = render_ai_settings()
 
     st.markdown("")
     run_btn = st.button("🔍 분석 실행 (규칙 기반 + 선택 AI)", type="primary", use_container_width=True)
 
     if run_btn:
-        msg = "규칙 기반 분석 및 OpenAI 해석 생성 중..." if (ai_enabled and api_key) else "규칙 기반 분석 중..."
+        msg = "분석·웹 리서치·AI 리포트 생성 중..." if (ai_enabled and api_key) else "규칙 기반 분석 중..."
         with st.spinner(msg):
             results = run_pipeline(
                 uploaded,
@@ -720,6 +863,7 @@ def render_tab_input() -> None:
                 ai_enabled=ai_enabled,
                 api_key=api_key,
                 ai_model=ai_model,
+                research_enabled=research_enabled,
             )
         if results:
             st.session_state["analysis_results"] = results
@@ -756,6 +900,8 @@ def render_tab_input() -> None:
         if not results["cleaning_log"].empty:
             with st.expander("정제 로그 상세"):
                 st.dataframe(results["cleaning_log"], use_container_width=True, hide_index=True)
+        _render_service_research_block(results)
+        _render_behavior_summary_block(results)
     else:
         st.info("CSV와 필수 정보를 입력한 뒤 **분석 실행**을 눌러 주세요.")
         sample = BASE_DIR / "data" / "sample_survey.csv"
@@ -771,11 +917,16 @@ def render_tab_analysis(results: dict) -> None:
     else:
         st.caption("탭1에서 OpenAI를 켜면 해석 탭이 활성화됩니다.")
 
-    sub_tabs = ["📊 한눈에 보기", "정량 상세", "정성·키워드", "가설", "🤖 AI 해석"]
-    t1, t2, t3, t4, t5 = st.tabs(sub_tabs)
+    sub_tabs = ["📊 한눈에 보기", "👥 핵심 사용 행태", "정량 상세", "정성·키워드", "가설", "🤖 AI 해석"]
+    t1, t1b, t2, t3, t4, t5 = st.tabs(sub_tabs)
 
     with t1:
         render_analysis_dashboard(results)
+
+    with t1b:
+        _render_behavior_summary_block(results)
+        _render_ai_block(results, "핵심 사용 행태")
+        _render_ai_block(results, "핵심 사용 행태 (AI)")
 
     with t2:
         st.subheader("정량 분석 상세")
@@ -796,7 +947,7 @@ def render_tab_analysis(results: dict) -> None:
             with h1:
                 hc = viz.hypothesis_verdict_df(hyp_df)
                 if not hc.empty:
-                    _show_bar_numbered(hc, height=240)
+                    _show_bar_numbered(hc, height=130)
             with h2:
                 st.dataframe(hyp_df, use_container_width=True, hide_index=True)
         else:
@@ -805,6 +956,8 @@ def render_tab_analysis(results: dict) -> None:
 
     with t5:
         st.subheader("OpenAI 해석 모음")
+        _render_service_research_block(results)
+        _render_ai_block(results, "서비스·경쟁 리서치")
         _render_ai_block(results, "개요·데이터 품질", "개요·데이터 품질")
         _render_ai_block(results, "정량·교차 분석")
         _render_ai_block(results, "정성 분석")
@@ -816,6 +969,8 @@ def render_tab_analysis(results: dict) -> None:
 
 def render_tab_insights_storage(results: dict) -> None:
     """탭3: 인사이트·액션·다운로드·저장공간."""
+    _render_behavior_summary_block(results)
+    _render_service_research_block(results)
     _render_ai_block(results, "최종 AI 인사이트", "최종 AI 인사이트")
 
     st.subheader("핵심 인사이트 (규칙 기반)")
@@ -838,7 +993,7 @@ def render_tab_insights_storage(results: dict) -> None:
         with ac1:
             pri = act_df["우선순위"].value_counts() if "우선순위" in act_df.columns else None
             if pri is not None and not pri.empty:
-                _show_bar_numbered(pri.to_frame("건수"), height=220)
+                _show_bar_numbered(pri.to_frame("건수"), height=120)
         with ac2:
             st.dataframe(act_df, use_container_width=True, hide_index=True)
     else:
@@ -854,14 +1009,15 @@ def render_tab_insights_storage(results: dict) -> None:
     def _bytes(path: Path) -> bytes:
         return path.read_bytes() if path.exists() else b""
 
-    d1, d2, d3, d4 = st.columns(4)
+    d1, d2, d3, d4, d5 = st.columns(5)
     outputs = [
         ("cleaned_data.csv", "text/csv"),
         ("cleaning_log.csv", "text/csv"),
         ("keyword_analysis.csv", "text/csv"),
         ("hypothesis_analysis.csv", "text/csv"),
+        ("behavior_summary.csv", "text/csv"),
     ]
-    for col, (fname, mime) in zip([d1, d2, d3, d4], outputs):
+    for col, (fname, mime) in zip([d1, d2, d3, d4, d5], outputs):
         p = OUTPUT_DIR / fname
         with col:
             if p.exists():
