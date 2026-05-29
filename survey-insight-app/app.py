@@ -8,6 +8,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
@@ -37,6 +38,7 @@ from modules.report_generator import (
 from modules.schema_detector import detect_question_types, get_columns_by_type
 from modules.sentiment_analysis import run_sentiment_analysis
 from modules.text_structure import run_text_structure_analysis
+from modules import visualizations as viz
 
 st.set_page_config(
     page_title="Survey Insight — UX Research",
@@ -126,6 +128,8 @@ st.markdown(
   .badge-csv { color: #bfdbfe; background: rgba(37,99,235,0.22); border: 1px solid rgba(96,165,250,0.5); }
   .badge-html { color: #bbf7d0; background: rgba(22,163,74,0.2); border: 1px solid rgba(74,222,128,0.5); }
   .badge-pdf { color: #fecaca; background: rgba(220,38,38,0.2); border: 1px solid rgba(248,113,113,0.5); }
+  [data-testid="stVerticalBlock"] > div:has(> [data-testid="stTabs"]) { gap: 0.25rem; }
+  h5 { margin-top: 0.5rem !important; margin-bottom: 0.35rem !important; color: #93c5fd !important; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -242,6 +246,206 @@ def render_ai_settings() -> tuple[bool, str, str]:
         st.session_state[SESSION_AI_ENABLED] = True
     enabled = bool(st.session_state.get(SESSION_AI_ENABLED, False)) if api_key else False
     return enabled, api_key, model
+
+
+def _show_fig(fig) -> None:
+    if fig is not None:
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+
+
+def render_analysis_dashboard(results: dict) -> None:
+    """탭2 — 한 화면 요약 대시보드 (차트·워드클라우드 밀집 배치)."""
+    basic = results["basic"]
+    cleaning = results["cleaning_summary"]
+    kw_df = results.get("keyword_df")
+    sent_df = results.get("sentiment_df")
+    journey_df = results.get("journey_df")
+    text_df = results.get("text_structure_df")
+    hyp_df = results.get("hypothesis_df")
+    quant = results.get("quant_results", {})
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("응답", basic["total_responses"])
+    m2.metric("문항", basic["total_questions"])
+    m3.metric("분석 포함", cleaning["included_count"])
+    m4.metric("신뢰도", cleaning["reliability"])
+    m5.metric("핵심 키워드", len(kw_df) if kw_df is not None and not kw_df.empty else 0)
+
+    st.markdown("##### 핵심 지표")
+    r1a, r1b, r1c = st.columns(3)
+    likert_df = viz.likert_summary_df(quant)
+    with r1a:
+        st.caption("리커트 평균")
+        if not likert_df.empty:
+            _show_fig(viz.make_likert_horizontal_figure(likert_df))
+        else:
+            st.info("리커트 문항 없음")
+    with r1b:
+        st.caption("감성 분포")
+        sent_series = viz.sentiment_counts_df(sent_df)
+        if not sent_series.empty:
+            pie_vals = sent_series["건수"] if "건수" in sent_series.columns else sent_series.iloc[:, 0]
+            _show_fig(viz.make_pie_figure(pie_vals, "감성"))
+        else:
+            st.info("감성 데이터 없음")
+    with r1c:
+        st.caption("데이터 정제")
+        clean_s = viz.cleaning_counts_series(cleaning)
+        if not clean_s.empty:
+            _show_fig(viz.make_pie_figure(clean_s, "응답 처리"))
+        else:
+            st.info("정제 데이터 없음")
+
+    st.markdown("##### 키워드")
+    r2a, r2b = st.columns([1, 1])
+    kw_chart = viz.keyword_chart_df(kw_df, top_n=12)
+    with r2a:
+        st.caption("상위 키워드 빈도")
+        if not kw_chart.empty:
+            st.bar_chart(kw_chart, height=320)
+        else:
+            st.info("키워드 없음")
+    with r2b:
+        st.caption("워드 클라우드")
+        wc_fig = viz.make_wordcloud_figure(kw_df)
+        if wc_fig:
+            _show_fig(wc_fig)
+        elif not viz.WORDCLOUD_AVAILABLE:
+            st.caption("`pip install wordcloud` 설치 시 표시됩니다. 좌측 막대 차트를 참고하세요.")
+        else:
+            st.info("워드클라우드 생성 불가")
+
+    st.markdown("##### 여정·텍스트·선택지")
+    r3a, r3b, r3c = st.columns(3)
+    journey_chart = viz.journey_chart_df(journey_df)
+    with r3a:
+        st.caption("여정 단계별 응답")
+        if not journey_chart.empty:
+            st.bar_chart(journey_chart, height=280)
+        else:
+            st.info("여정 매핑 없음")
+    with r3b:
+        st.caption("텍스트 구조 유형")
+        ts = viz.text_structure_counts_df(text_df)
+        if not ts.empty:
+            ts_vals = ts["건수"] if "건수" in ts.columns else ts.iloc[:, 0]
+            _show_fig(viz.make_pie_figure(ts_vals, "구조 유형"))
+        else:
+            st.info("텍스트 구조 없음")
+    with r3c:
+        st.caption("선택형 문항 Top")
+        choice_df = viz.choice_distribution_df(quant, max_questions=2)
+        if choice_df is not None and not choice_df.empty:
+            pivot = choice_df.pivot(index="선택지", columns="문항", values="비율").fillna(0)
+            st.bar_chart(pivot, height=280)
+        else:
+            st.info("선택형 문항 없음")
+
+    hyp_chart = viz.hypothesis_verdict_df(hyp_df)
+    if not hyp_chart.empty:
+        st.markdown("##### 가설 검증 요약")
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            st.bar_chart(hyp_chart, height=220)
+        with c2:
+            hyp_cols = [c for c in ("가설", "지지 여부", "판단 근거") if c in hyp_df.columns]
+            st.dataframe(hyp_df[hyp_cols].head(5), use_container_width=True, hide_index=True)
+
+    if results.get("quant_interp"):
+        st.markdown("##### 정량 해석 한줄 요약")
+        for item in results["quant_interp"][:4]:
+            st.markdown(f"- {item['text']}")
+
+
+def render_quant_detail(results: dict) -> None:
+    """정량 문항별 차트 + 표 나란히."""
+    quant = results["quant_results"]
+    for col, res in quant.items():
+        if col.startswith("_") or not isinstance(res, dict):
+            continue
+        with st.expander(f"📊 {col}", expanded=False):
+            left, right = st.columns([1.1, 1])
+            with left:
+                if "distribution" in res:
+                    dist_df = pd.DataFrame(res["distribution"])
+                    if not dist_df.empty and "choice" in dist_df.columns:
+                        chart_df = dist_df.set_index("choice")[["ratio"]]
+                        chart_df.columns = ["비율(%)"]
+                        st.bar_chart(chart_df, height=260)
+                elif res.get("type") == "리커트 척도형":
+                    likert_one = viz.likert_summary_df({col: res})
+                    _show_fig(viz.make_likert_horizontal_figure(likert_one))
+                    st.caption(
+                        f"평균 {res.get('mean')} · 긍정 {res.get('positive_pct')}% · "
+                        f"부정 {res.get('negative_pct')}%"
+                    )
+            with right:
+                if "distribution" in res:
+                    st.dataframe(pd.DataFrame(res["distribution"]), use_container_width=True, hide_index=True)
+                else:
+                    st.json({k: v for k, v in res.items() if k != "interpretation"})
+            if res.get("interpretation"):
+                st.info(res["interpretation"])
+
+    cross = quant.get("_cross_analysis", [])
+    if cross:
+        st.markdown("**교차 분석**")
+        for c in cross:
+            st.write(c.get("interpretation", ""))
+
+
+def render_qual_keyword_detail(results: dict) -> None:
+    """정성·키워드·감성·여정 — 시각화 우선."""
+    integrated = results["qual_results"].get("integrated", {})
+    st.write(integrated.get("summary", ""))
+
+    st.markdown("##### 키워드 · 감성")
+    a, b = st.columns(2)
+    kw_df = results.get("keyword_df")
+    sent_df = results.get("sentiment_df")
+    with a:
+        kw_chart = viz.keyword_chart_df(kw_df, top_n=15)
+        if not kw_chart.empty:
+            st.bar_chart(kw_chart, height=340)
+        wc = viz.make_wordcloud_figure(kw_df)
+        if wc:
+            _show_fig(wc)
+    with b:
+        sent_series = viz.sentiment_counts_df(sent_df)
+        if not sent_series.empty:
+            pie_vals = sent_series["건수"] if "건수" in sent_series.columns else sent_series.iloc[:, 0]
+            _show_fig(viz.make_pie_figure(pie_vals, "감성"))
+        if sent_df is not None and not sent_df.empty:
+            with st.expander("감성 상세 표"):
+                show_cols = [c for c in ["감성", "의미", "건수", "대표 응답"] if c in sent_df.columns]
+                st.dataframe(sent_df[show_cols].head(12), use_container_width=True, hide_index=True)
+
+    st.markdown("##### 여정 · 텍스트 구조")
+    c1, c2 = st.columns(2)
+    with c1:
+        jc = viz.journey_chart_df(results.get("journey_df"))
+        if not jc.empty:
+            st.bar_chart(jc, height=300)
+        jdf = results.get("journey_df")
+        if jdf is not None and not jdf.empty:
+            st.dataframe(jdf, use_container_width=True, hide_index=True)
+    with c2:
+        ts = viz.text_structure_counts_df(results.get("text_structure_df"))
+        if not ts.empty:
+            ts_vals = ts["건수"] if "건수" in ts.columns else ts.iloc[:, 0]
+            _show_fig(viz.make_pie_figure(ts_vals, "텍스트 구조"))
+        tdf = results.get("text_structure_df")
+        if tdf is not None and not tdf.empty:
+            with st.expander("텍스트 구조 상세"):
+                st.dataframe(tdf.head(20), use_container_width=True, hide_index=True)
+
+    st.markdown("##### 정성 코멘트")
+    for col, data in results["qual_results"].get("per_question", {}).items():
+        with st.expander(f"문항: {col}"):
+            st.write(data.get("summary", ""))
+            for rep in data.get("representative_responses", [])[:3]:
+                st.caption(f"ID {rep['response_id']}: {rep['text']}")
 
 
 def _render_ai_block(results: dict, section_key: str, title: str | None = None) -> None:
@@ -515,14 +719,17 @@ def render_tab_input() -> None:
         st.dataframe(results["schema_df"], use_container_width=True)
 
         st.subheader("데이터 정제")
-        cc1, cc2, cc3 = st.columns(3)
-        cc1.write(f"**제외:** {cleaning_summary['excluded_count']}건")
-        cc2.write(f"**검토 필요:** {cleaning_summary['review_count']}건")
-        cc3.write(f"**마스킹:** {cleaning_summary['masked_count']}건")
-        if cleaning_summary.get("label_counts"):
-            st.bar_chart(pd.Series(cleaning_summary["label_counts"]))
+        cc1, cc2, cc3, cc4 = st.columns([1, 1, 1, 1.2])
+        cc1.metric("제외", cleaning_summary["excluded_count"])
+        cc2.metric("검토 필요", cleaning_summary["review_count"])
+        cc3.metric("마스킹", cleaning_summary["masked_count"])
+        with cc4:
+            clean_s = viz.cleaning_counts_series(cleaning_summary)
+            if not clean_s.empty:
+                _show_fig(viz.make_pie_figure(clean_s, "정제 유형"))
         if not results["cleaning_log"].empty:
-            st.dataframe(results["cleaning_log"], use_container_width=True)
+            with st.expander("정제 로그 상세"):
+                st.dataframe(results["cleaning_log"], use_container_width=True, hide_index=True)
     else:
         st.info("CSV와 필수 정보를 입력한 뒤 **분석 실행**을 눌러 주세요.")
         sample = BASE_DIR / "data" / "sample_survey.csv"
@@ -532,71 +739,53 @@ def render_tab_input() -> None:
 
 
 def render_tab_analysis(results: dict) -> None:
-    """탭2: 정량·정성·텍스트 분석 + OpenAI 해석."""
+    """탭2: 대시보드 중심 시각화 + 상세 탭."""
     if results.get("ai_used"):
-        st.success("OpenAI 해석이 포함되어 있습니다. 각 섹션 아래 🤖 블록을 확인하세요.")
+        st.success("OpenAI 해석 포함 — **AI 해석** 탭에서 모아볼 수 있습니다.")
     else:
-        st.caption(
-            "현재 **규칙 기반 분석**만 표시됩니다. "
-            "탭1에서 OpenAI API Key를 입력하고 「OpenAI 해석 포함」을 켠 뒤 다시 분석 실행하세요."
-        )
+        st.caption("탭1에서 OpenAI를 켜면 해석 탭이 활성화됩니다.")
 
-    _render_ai_block(results, "개요·데이터 품질", "개요·데이터 품질")
+    sub_tabs = ["📊 한눈에 보기", "정량 상세", "정성·키워드", "가설", "🤖 AI 해석"]
+    t1, t2, t3, t4, t5 = st.tabs(sub_tabs)
 
-    st.subheader("정량 분석")
-    for item in results["quant_interp"]:
-        st.write(f"• {item['text']}")
-    for col, res in results["quant_results"].items():
-        if col.startswith("_"):
-            continue
-        with st.expander(col):
-            if "distribution" in res:
-                st.dataframe(pd.DataFrame(res["distribution"]), use_container_width=True)
-            else:
-                st.json({k: v for k, v in res.items() if k != "interpretation"})
+    with t1:
+        render_analysis_dashboard(results)
 
-    cross = results["quant_results"].get("_cross_analysis", [])
-    if cross:
-        st.markdown("**교차 분석**")
-        for c in cross:
-            st.write(c.get("interpretation", ""))
-    _render_ai_block(results, "정량·교차 분석")
+    with t2:
+        st.subheader("정량 분석 상세")
+        render_quant_detail(results)
+        _render_ai_block(results, "정량·교차 분석")
 
-    st.subheader("정성 분석")
-    integrated = results["qual_results"].get("integrated", {})
-    st.write(integrated.get("summary", ""))
-    for col, data in results["qual_results"].get("per_question", {}).items():
-        with st.expander(f"문항: {col}"):
-            st.write(data.get("summary", ""))
-            for rep in data.get("representative_responses", []):
-                st.caption(f"ID {rep['response_id']}: {rep['text']}")
-    _render_ai_block(results, "정성 분석")
+    with t3:
+        st.subheader("정성 · 키워드 · 감성")
+        render_qual_keyword_detail(results)
+        _render_ai_block(results, "정성 분석")
+        _render_ai_block(results, "키워드·감성")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("텍스트 구조")
-        if not results["text_structure_df"].empty:
-            st.dataframe(results["text_structure_df"], use_container_width=True)
-    with c2:
-        st.subheader("키워드")
-        if not results["keyword_df"].empty:
-            st.dataframe(results["keyword_df"], use_container_width=True)
+    with t4:
+        st.subheader("가설 검토")
+        hyp_df = results.get("hypothesis_df")
+        if hyp_df is not None and not hyp_df.empty:
+            h1, h2 = st.columns([1, 2])
+            with h1:
+                hc = viz.hypothesis_verdict_df(hyp_df)
+                if not hc.empty:
+                    st.bar_chart(hc, height=240)
+            with h2:
+                st.dataframe(hyp_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("가설 분석 결과 없음")
+        _render_ai_block(results, "가설 검토")
 
-    c3, c4 = st.columns(2)
-    with c3:
-        st.subheader("감성 분석")
-        if not results["sentiment_df"].empty:
-            st.dataframe(results["sentiment_df"], use_container_width=True)
-    with c4:
-        st.subheader("사용자 여정")
-        if not results["journey_df"].empty:
-            st.dataframe(results["journey_df"], use_container_width=True)
-    _render_ai_block(results, "키워드·감성")
-
-    st.subheader("가설 검토")
-    if not results["hypothesis_df"].empty:
-        st.dataframe(results["hypothesis_df"], use_container_width=True)
-    _render_ai_block(results, "가설 검토")
+    with t5:
+        st.subheader("OpenAI 해석 모음")
+        _render_ai_block(results, "개요·데이터 품질", "개요·데이터 품질")
+        _render_ai_block(results, "정량·교차 분석")
+        _render_ai_block(results, "정성 분석")
+        _render_ai_block(results, "키워드·감성")
+        _render_ai_block(results, "가설 검토")
+        if not results.get("ai_interpretations"):
+            st.info("AI 해석이 없습니다. 탭1에서 API Key와 「OpenAI 해석 포함」을 설정 후 다시 분석하세요.")
 
 
 def render_tab_insights_storage(results: dict) -> None:
@@ -616,7 +805,18 @@ def render_tab_insights_storage(results: dict) -> None:
             )
 
     st.subheader("개선 액션 아이템")
-    st.dataframe(pd.DataFrame(results["actions"]), use_container_width=True)
+    actions = results.get("actions", [])
+    if actions:
+        act_df = pd.DataFrame(actions)
+        ac1, ac2 = st.columns([1, 1.2])
+        with ac1:
+            pri = act_df["우선순위"].value_counts() if "우선순위" in act_df.columns else None
+            if pri is not None and not pri.empty:
+                st.bar_chart(pri.to_frame("건수"), height=220)
+        with ac2:
+            st.dataframe(act_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("액션 아이템 없음")
 
     st.subheader("후속 리서치 제안")
     for item in results["follow_up"]:
