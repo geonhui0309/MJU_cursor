@@ -403,35 +403,63 @@ def render_analysis_dashboard(results: dict) -> None:
 
 
 def render_quant_detail(results: dict) -> None:
-    """정량 문항별 차트 + 표 나란히."""
+    """정량 문항별 차트 + 표 (요약 + 선택형 상세)."""
     quant = results["quant_results"]
-    for col, res in quant.items():
-        if col.startswith("_") or not isinstance(res, dict):
-            continue
-        with st.expander(f"📊 {col}", expanded=False):
-            left, right = st.columns([1.1, 1])
-            with left:
-                if "distribution" in res:
-                    dist_df = pd.DataFrame(res["distribution"])
-                    if not dist_df.empty and "choice" in dist_df.columns:
-                        chart_df = dist_df.set_index("choice")[["ratio"]]
-                        chart_df.columns = ["비율(%)"]
-                        _show_bar_numbered(chart_df, height=140)
-                elif res.get("type") == "리커트 척도형":
-                    likert_one = viz.likert_summary_df({col: res})
-                    fig, leg = viz.make_likert_horizontal_figure(likert_one)
-                    _show_fig(fig, leg)
-                    st.caption(
-                        f"평균 {res.get('mean')} · 긍정 {res.get('positive_pct')}% · "
-                        f"부정 {res.get('negative_pct')}%"
-                    )
-            with right:
-                if "distribution" in res:
-                    st.dataframe(pd.DataFrame(res["distribution"]), use_container_width=True, hide_index=True)
-                else:
-                    st.json({k: v for k, v in res.items() if k != "interpretation"})
-            if res.get("interpretation"):
-                st.info(res["interpretation"])
+    valid_items = [
+        (col, res)
+        for col, res in quant.items()
+        if not col.startswith("_") and isinstance(res, dict)
+    ]
+    if not valid_items:
+        st.info("정량 분석 가능한 문항이 없습니다.")
+        return
+
+    summary_rows = []
+    for col, res in valid_items:
+        summary_rows.append(
+            {
+                "문항": col,
+                "유형": res.get("type", "-"),
+                "응답수": res.get("total", "-"),
+                "주요 지표": (
+                    f"평균 {res.get('mean', '-')}"
+                    if res.get("type") == "리커트 척도형"
+                    else (f"Top {res.get('top', '-')}" if "top" in res else "-")
+                ),
+            }
+        )
+    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+
+    selected_col = st.selectbox(
+        "상세 분석 문항 선택",
+        options=[col for col, _ in valid_items],
+        key="quant_detail_select",
+    )
+    selected_res = dict(valid_items)[selected_col]
+
+    left, right = st.columns([1.1, 1])
+    with left:
+        if "distribution" in selected_res:
+            dist_df = pd.DataFrame(selected_res["distribution"])
+            if not dist_df.empty and "choice" in dist_df.columns:
+                chart_df = dist_df.set_index("choice")[["ratio"]]
+                chart_df.columns = ["비율(%)"]
+                _show_bar_numbered(chart_df, height=140)
+        elif selected_res.get("type") == "리커트 척도형":
+            likert_one = viz.likert_summary_df({selected_col: selected_res})
+            fig, leg = viz.make_likert_horizontal_figure(likert_one)
+            _show_fig(fig, leg)
+            st.caption(
+                f"평균 {selected_res.get('mean')} · 긍정 {selected_res.get('positive_pct')}% · "
+                f"부정 {selected_res.get('negative_pct')}%"
+            )
+    with right:
+        if "distribution" in selected_res:
+            st.dataframe(pd.DataFrame(selected_res["distribution"]), use_container_width=True, hide_index=True)
+        else:
+            st.json({k: v for k, v in selected_res.items() if k != "interpretation"})
+    if selected_res.get("interpretation"):
+        st.info(selected_res["interpretation"])
 
     cross = quant.get("_cross_analysis", [])
     if cross:
@@ -484,11 +512,35 @@ def render_qual_keyword_detail(results: dict) -> None:
                 st.dataframe(tdf.head(20), use_container_width=True, hide_index=True)
 
     st.markdown("##### 정성 코멘트")
-    for col, data in results["qual_results"].get("per_question", {}).items():
-        with st.expander(f"문항: {col}"):
-            st.write(data.get("summary", ""))
-            for rep in data.get("representative_responses", [])[:3]:
-                st.caption(f"ID {rep['response_id']}: {rep['text']}")
+    per_q = results["qual_results"].get("per_question", {})
+    if not per_q:
+        st.info("정성 코멘트가 없습니다.")
+        return
+
+    qual_rows = []
+    for col, data in per_q.items():
+        qual_rows.append(
+            {
+                "문항": col,
+                "응답수": data.get("response_count", 0),
+                "구체성": data.get("specificity", "-"),
+                "요약": (data.get("summary", "") or "")[:120],
+            }
+        )
+    st.dataframe(pd.DataFrame(qual_rows), use_container_width=True, hide_index=True)
+
+    selected_q = st.selectbox(
+        "정성 코멘트 상세 문항 선택",
+        options=list(per_q.keys()),
+        key="qual_detail_select",
+    )
+    selected_data = per_q[selected_q]
+    st.write(selected_data.get("summary", ""))
+    reps = selected_data.get("representative_responses", [])
+    if reps:
+        st.markdown("**대표 응답**")
+        for rep in reps[:5]:
+            st.caption(f"ID {rep['response_id']}: {rep['text']}")
 
 
 def _render_behavior_summary_block(results: dict) -> None:
