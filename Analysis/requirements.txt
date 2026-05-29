@@ -1,6 +1,0 @@
-streamlit
-pandas
-google-play-scraper
-openai
-jinja2
-weasyprint

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>{{ service_name }} — 설문 인사이트 리포트</title>
+  <style>
+    body { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; max-width: 900px; margin: 0 auto; padding: 2rem; color: #1e293b; line-height: 1.6; }
+    h1 { color: #0f172a; border-bottom: 3px solid #3b82f6; padding-bottom: 0.5rem; }
+    h2 { color: #334155; margin-top: 2rem; }
+    .meta { background: #f1f5f9; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; }
+    .insight-card { border-left: 4px solid #3b82f6; padding: 1rem; margin: 1rem 0; background: #f8fafc; }
+    .fact { color: #0369a1; }
+    .interpretation { color: #7c3aed; }
+    .action { color: #15803d; }
+    table.data-table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+    table.data-table th, table.data-table td { border: 1px solid #e2e8f0; padding: 0.5rem; text-align: left; }
+    table.data-table th { background: #f1f5f9; }
+    footer { margin-top: 3rem; font-size: 0.85rem; color: #64748b; }
+  </style>
+</head>
+<body>
+  <h1>{{ service_name }} — UX Research 인사이트 리포트</h1>
+  <div class="meta">
+    <p><strong>생성일:</strong> {{ generated_at }}</p>
+    <p><strong>서비스 설명:</strong> {{ service_description }}</p>
+    <p><strong>설문 목적:</strong> {{ survey_purpose }}</p>
+    <p><strong>분석 가설:</strong> {{ hypotheses }}</p>
+    <p><strong>응답 수:</strong> {{ response_count }} / <strong>문항 수:</strong> {{ question_count }}</p>
+    <p><strong>데이터 신뢰도:</strong> {{ reliability }}</p>
+  </div>
+
+  <h2>1. 데이터 품질 및 정제</h2>
+  {{ cleaning_summary_html | safe }}
+
+  <h2>2. 문항 구조</h2>
+  {{ schema_html | safe }}
+
+  <h2>3. 정량 분석</h2>
+  {% for interp in quant_interpretations %}
+  <p>{{ interp }}</p>
+  {% endfor %}
+  {{ quant_html | safe }}
+
+  <h2>4. 키워드 분석</h2>
+  {{ keyword_html | safe }}
+
+  <h2>5. 감성 분석</h2>
+  {{ sentiment_html | safe }}
+
+  <h2>6. 사용자 여정 매핑</h2>
+  {{ journey_html | safe }}
+
+  <h2>7. 가설 검토</h2>
+  {{ hypothesis_html | safe }}
+
+  <h2>8. 핵심 인사이트</h2>
+  {% for ins in insights %}
+  <div class="insight-card">
+    <h3>{{ ins['인사이트 제목'] }}</h3>
+    <p class="fact"><strong>Fact:</strong> {{ ins['Fact'] }}</p>
+    <p class="interpretation"><strong>Interpretation:</strong> {{ ins['Interpretation'] }}</p>
+    <p class="action"><strong>Action:</strong> {{ ins['Action'] }}</p>
+    <p><small>우선순위: {{ ins['우선순위'] }} | 신뢰도: {{ ins['판단 신뢰도'] }}</small></p>
+  </div>
+  {% endfor %}
+
+  <h2>9. 개선 액션 아이템</h2>
+  {{ actions_html | safe }}
+
+  <h2>10. 후속 리서치 제안</h2>
+  <ul>
+  {% for item in follow_up %}
+    <li>{{ item }}</li>
+  {% endfor %}
+  </ul>
+
+  <footer>Survey Insight App — {{ generated_at }}</footer>
+</body>
+</html>
