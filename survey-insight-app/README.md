@@ -28,8 +28,14 @@ streamlit run app.py
 
 `data/sample_survey.csv`를 업로드하여 동작을 확인할 수 있습니다.
 
-HF Korea Nemotron persona DB를 쓰려면 탭1에서 `.db/.sqlite` 파일을 업로드하거나
-`data/personas.db` 경로에 미리 두면 됩니다.
+HF Korea Nemotron persona DB는 세 가지 방식으로 준비할 수 있습니다.
+
+1. 탭1에서 `.db/.sqlite` 파일 업로드
+2. `data/personas.db` 경로에 미리 두기
+3. 탭1의 `HF repo id`를 입력해 자동 다운로드
+
+`HF repo id`는 보통 `조직또는사용자명/리포지토리명` 형태입니다.
+예: `my-org/korean-persona-db`
 
 Hugging Face 생성 비교를 쓰려면 `HF Token`과 모델명을 함께 입력하세요.
 

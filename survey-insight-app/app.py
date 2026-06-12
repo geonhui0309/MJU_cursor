@@ -24,6 +24,7 @@ from modules.ai_analyzer import get_api_key, run_ai_analysis
 from modules.behavior_summary import enhance_behaviors_with_ai, summarize_usage_behaviors
 from modules.service_research import run_service_research
 from modules.cleaner import clean_data
+from modules.hf_persona_loader import prepare_persona_db_from_hf
 from modules.hypothesis_analysis import run_hypothesis_analysis
 from modules.insight_generator import generate_insights
 from modules.journey_mapping import run_journey_mapping
@@ -64,6 +65,9 @@ SESSION_MODEL = "si_openai_model"
 SESSION_HF_API_KEY = "si_hf_api_key"
 SESSION_HF_MODEL = "si_hf_model"
 SESSION_PERSONA_PROVIDER = "si_persona_provider"
+SESSION_HF_DATASET_REPO = "si_hf_dataset_repo"
+SESSION_HF_DATASET_FILE = "si_hf_dataset_file"
+SESSION_HF_DATASET_REVISION = "si_hf_dataset_revision"
 PERSONA_DB_CACHE = BASE_DIR / "data" / "personas.db"
 
 # ─── 스타일 (리뷰 분석기와 유사한 다크 테마 + 상단 탭) ─────────
@@ -267,6 +271,12 @@ def render_ai_settings() -> tuple[bool, str, str, bool, str, str, str]:
         st.markdown("**Hugging Face**")
         if SESSION_HF_MODEL not in st.session_state:
             st.session_state[SESSION_HF_MODEL] = os.environ.get("HF_MODEL", "openai/gpt-oss-120b:fastest") or "openai/gpt-oss-120b:fastest"
+        if SESSION_HF_DATASET_REPO not in st.session_state:
+            st.session_state[SESSION_HF_DATASET_REPO] = ""
+        if SESSION_HF_DATASET_FILE not in st.session_state:
+            st.session_state[SESSION_HF_DATASET_FILE] = ""
+        if SESSION_HF_DATASET_REVISION not in st.session_state:
+            st.session_state[SESSION_HF_DATASET_REVISION] = ""
         st.text_input(
             "HF Token",
             type="password",
@@ -274,6 +284,25 @@ def render_ai_settings() -> tuple[bool, str, str, bool, str, str, str]:
             key=SESSION_HF_API_KEY,
             help="Inference Providers 권한이 있는 Hugging Face token",
         )
+        st.text_input(
+            "HF repo id",
+            key=SESSION_HF_DATASET_REPO,
+            help="예: org_or_user/repo_name. 데이터셋 repo 기준입니다.",
+            placeholder="예: my-org/korean-persona-db",
+        )
+        hfc1, hfc2 = st.columns(2)
+        with hfc1:
+            st.text_input(
+                "HF 파일명 (선택)",
+                key=SESSION_HF_DATASET_FILE,
+                placeholder="예: personas.db 또는 personas.csv",
+            )
+        with hfc2:
+            st.text_input(
+                "HF revision (선택)",
+                key=SESSION_HF_DATASET_REVISION,
+                placeholder="main",
+            )
         st.text_input("HF 모델", key=SESSION_HF_MODEL)
 
         if SESSION_PERSONA_PROVIDER not in st.session_state:
@@ -296,6 +325,9 @@ def render_ai_settings() -> tuple[bool, str, str, bool, str, str, str]:
     hf_api_key = str(st.session_state.get(SESSION_HF_API_KEY, "") or "").strip()
     hf_model = st.session_state.get(SESSION_HF_MODEL, "openai/gpt-oss-120b:fastest")
     persona_provider = st.session_state.get(SESSION_PERSONA_PROVIDER, "openai")
+    st.session_state[SESSION_HF_DATASET_REPO] = str(st.session_state.get(SESSION_HF_DATASET_REPO, "") or "").strip()
+    st.session_state[SESSION_HF_DATASET_FILE] = str(st.session_state.get(SESSION_HF_DATASET_FILE, "") or "").strip()
+    st.session_state[SESSION_HF_DATASET_REVISION] = str(st.session_state.get(SESSION_HF_DATASET_REVISION, "") or "").strip()
     if api_key and SESSION_AI_ENABLED not in st.session_state:
         st.session_state[SESSION_AI_ENABLED] = True
     enabled = bool(st.session_state.get(SESSION_AI_ENABLED, False)) if api_key else False
@@ -315,6 +347,25 @@ def resolve_persona_db(uploaded_db) -> Path | None:
     if PERSONA_DB_CACHE.exists():
         return PERSONA_DB_CACHE
     return None
+
+
+def ensure_persona_db(uploaded_db, hf_repo_id: str, hf_token: str, hf_filename: str, hf_revision: str) -> tuple[Path | None, str]:
+    """업로드 또는 HF 자동 다운로드로 persona DB를 준비."""
+    uploaded_path = resolve_persona_db(uploaded_db)
+    if uploaded_path is not None:
+        return uploaded_path, ""
+    if hf_repo_id.strip():
+        return prepare_persona_db_from_hf(
+            repo_id=hf_repo_id,
+            output_dir=PERSONA_DB_CACHE.parent,
+            token=hf_token,
+            filename=hf_filename,
+            repo_type="dataset",
+            revision=hf_revision,
+        )
+    if PERSONA_DB_CACHE.exists():
+        return PERSONA_DB_CACHE, ""
+    return None, ""
 
 
 def _render_legend(legend: list[str]) -> None:
@@ -1127,7 +1178,13 @@ def render_tab_input() -> None:
     run_btn = st.button("🔍 분석 실행 (규칙 기반 + 선택 AI)", type="primary", use_container_width=True)
 
     if run_btn:
-        persona_db_path = resolve_persona_db(uploaded_persona_db)
+        persona_db_path, persona_db_note = ensure_persona_db(
+            uploaded_persona_db,
+            st.session_state.get(SESSION_HF_DATASET_REPO, ""),
+            hf_api_key,
+            st.session_state.get(SESSION_HF_DATASET_FILE, ""),
+            st.session_state.get(SESSION_HF_DATASET_REVISION, ""),
+        )
         persona_llm_enabled = (
             (persona_provider in {"openai", "both"} and bool(api_key) and ai_enabled)
             or (persona_provider in {"hf", "both"} and bool(hf_api_key))
@@ -1164,6 +1221,8 @@ def render_tab_input() -> None:
                 notes.append("가상 인터뷰/검증 포함")
             note_text = f" ({', '.join(notes)})" if notes else ""
             st.success(f"분석이 완료되었습니다{note_text}. **탭2**에서 결과, **탭3**에서 인사이트를 확인하세요.")
+            if persona_db_note:
+                st.info(persona_db_note)
             st.rerun()
 
     results = st.session_state.get("analysis_results")
