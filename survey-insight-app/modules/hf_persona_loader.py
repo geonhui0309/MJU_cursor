@@ -40,39 +40,42 @@ def prepare_persona_db_from_hf(
     if revision.strip():
         kwargs["revision"] = revision.strip()
 
-    if filename.strip():
-        downloaded = Path(hf_hub_download(filename=filename.strip(), **kwargs))
-        return _materialize_as_db(downloaded, target_db)
+    try:
+        if filename.strip():
+            downloaded = Path(hf_hub_download(filename=filename.strip(), **kwargs))
+            return _materialize_as_db(downloaded, target_db)
 
-    snapshot_path = Path(
-        snapshot_download(
-            allow_patterns=[
-                "*.db",
-                "*.sqlite",
-                "*.sqlite3",
-                "*.csv",
-                "*.json",
-                "*.jsonl",
-                "*.ndjson",
-            ],
-            **kwargs,
+        snapshot_path = Path(
+            snapshot_download(
+                allow_patterns=[
+                    "*.db",
+                    "*.sqlite",
+                    "*.sqlite3",
+                    "*.csv",
+                    "*.json",
+                    "*.jsonl",
+                    "*.ndjson",
+                ],
+                **kwargs,
+            )
         )
-    )
-    candidates = sorted(
-        [p for p in snapshot_path.rglob("*") if p.is_file()],
-        key=lambda p: p.stat().st_size,
-        reverse=True,
-    )
-    if not candidates:
-        return None, f"{repo_id}에서 사용할 수 있는 파일을 찾지 못했습니다."
+        candidates = sorted(
+            [p for p in snapshot_path.rglob("*") if p.is_file()],
+            key=lambda p: p.stat().st_size,
+            reverse=True,
+        )
+        if not candidates:
+            return None, f"{repo_id}에서 사용할 수 있는 파일을 찾지 못했습니다."
 
-    db_candidate = next((p for p in candidates if p.suffix.lower() in DB_EXTS), None)
-    if db_candidate:
-        return _materialize_as_db(db_candidate, target_db)
+        db_candidate = next((p for p in candidates if p.suffix.lower() in DB_EXTS), None)
+        if db_candidate:
+            return _materialize_as_db(db_candidate, target_db)
 
-    tabular_candidate = next((p for p in candidates if p.suffix.lower() in TABULAR_EXTS), None)
-    if tabular_candidate:
-        return _materialize_as_db(tabular_candidate, target_db)
+        tabular_candidate = next((p for p in candidates if p.suffix.lower() in TABULAR_EXTS), None)
+        if tabular_candidate:
+            return _materialize_as_db(tabular_candidate, target_db)
+    except Exception as exc:
+        return None, f"HF persona DB 준비 실패: {type(exc).__name__}: {exc}"
 
     return None, f"{repo_id}에서 DB 또는 변환 가능한 표 형식 파일을 찾지 못했습니다."
 

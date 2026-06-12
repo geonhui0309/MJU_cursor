@@ -717,13 +717,23 @@ def _render_ai_block(results: dict, section_key: str, title: str | None = None) 
 def _render_persona_research_block(results: dict) -> None:
     """HF persona DB 기반 가상 사용자 검증."""
     persona = results.get("persona_research") or {}
-    if not persona.get("db_available") and not persona.get("summary"):
-        return
+    persona_note = str(results.get("persona_db_note", "") or "").strip()
 
     with st.container(border=True):
         st.markdown("### 🧑 HF Persona DB · Virtual IDI")
+        if not persona.get("db_available") and not persona.get("summary"):
+            if persona_note:
+                st.warning(persona_note)
+            else:
+                st.info(
+                    "가상 사용자 DB가 아직 준비되지 않았습니다. "
+                    "탭1에서 `Korea Nemotron Persona DB` preset으로 다시 분석을 실행해 주세요."
+                )
+            return
         if persona.get("summary"):
             st.markdown(persona["summary"])
+        if persona_note:
+            st.caption(persona_note)
         if persona.get("error"):
             st.warning(persona["error"])
             return
@@ -832,6 +842,7 @@ def run_pipeline(
     ai_model: str = "gpt-4o-mini",
     research_enabled: bool = True,
     persona_db_path: str | Path | None = None,
+    persona_db_note: str = "",
 ) -> dict | None:
     err = _validate_inputs(
         uploaded, service_name, service_description, survey_purpose, hypotheses
@@ -1030,6 +1041,7 @@ def run_pipeline(
         "service_research": service_research,
         "behavior_summary": behavior_summary,
         "persona_research": persona_research,
+        "persona_db_note": persona_db_note,
         "persona_ai_used": persona_research.get("ai_used", False),
         "ai_interpretations": {},
         "ai_used": False,
@@ -1168,6 +1180,7 @@ def render_tab_input() -> None:
                 ai_model=ai_model,
                 research_enabled=research_enabled,
                 persona_db_path=persona_db_path,
+                persona_db_note=persona_db_note,
             )
         if results:
             st.session_state["analysis_results"] = results
