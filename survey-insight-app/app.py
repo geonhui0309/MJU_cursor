@@ -69,7 +69,7 @@ SESSION_HF_DATASET_REPO = "si_hf_dataset_repo"
 SESSION_HF_DATASET_FILE = "si_hf_dataset_file"
 SESSION_HF_DATASET_REVISION = "si_hf_dataset_revision"
 PERSONA_DB_CACHE = BASE_DIR / "data" / "personas.db"
-KOREA_NEMOTRON_REPO_ID = os.environ.get("HF_KOREA_NEMOTRON_REPO_ID", "").strip()
+KOREA_NEMOTRON_REPO_ID = os.environ.get("HF_KOREA_NEMOTRON_REPO_ID", "nvidia/Nemotron-Personas-Korea").strip()
 KOREA_NEMOTRON_FILENAME = os.environ.get("HF_KOREA_NEMOTRON_FILENAME", "").strip()
 KOREA_NEMOTRON_REVISION = os.environ.get("HF_KOREA_NEMOTRON_REVISION", "").strip()
 HF_PERSONA_PRESETS = {
@@ -292,13 +292,6 @@ def render_ai_settings() -> tuple[bool, str, str, bool, str, str, str, str]:
             st.session_state[SESSION_HF_DATASET_FILE] = ""
         if SESSION_HF_DATASET_REVISION not in st.session_state:
             st.session_state[SESSION_HF_DATASET_REVISION] = ""
-        hf_token_input = st.text_input(
-            "HF Token (선택)",
-            type="password",
-            placeholder="hf_...",
-            key=SESSION_HF_API_KEY,
-            help="공개 repo는 비워도 됩니다. 비공개/gated repo 다운로드 시에만 필요합니다.",
-        )
         selected_preset = st.selectbox(
             "Persona DB 소스",
             options=list(HF_PERSONA_PRESETS.keys()),
@@ -331,13 +324,16 @@ def render_ai_settings() -> tuple[bool, str, str, bool, str, str, str, str]:
             hf_repo_input = preset.get("repo_id", "")
             hf_file_input = preset.get("filename", "")
             hf_revision_input = preset.get("revision", "")
-            if hf_repo_input:
-                st.caption(f"선택된 preset: `{hf_repo_input}`")
-            else:
-                st.warning(
-                    "Korea Nemotron preset의 실제 HF repo id가 아직 앱 설정에 등록되지 않았습니다. "
-                    "배포 환경변수 `HF_KOREA_NEMOTRON_REPO_ID`를 설정하거나, `직접 입력`을 선택해 주세요."
-                )
+            st.caption(f"선택된 preset: `{hf_repo_input}`")
+
+        with st.expander("고급 옵션: 비공개 HF repo", expanded=False):
+            hf_token_input = st.text_input(
+                "HF Token (선택)",
+                type="password",
+                placeholder="hf_...",
+                key=SESSION_HF_API_KEY,
+                help="공개 repo는 비워도 됩니다. 비공개/gated repo 다운로드 시에만 필요합니다.",
+            )
         st.caption("HF는 persona DB 다운로드/준비에만 사용합니다. Virtual IDI / Validation acting은 OpenAI로 생성됩니다.")
 
     api_key = get_api_key(st.session_state.get(SESSION_API_KEY, ""))

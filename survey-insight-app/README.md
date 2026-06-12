@@ -32,9 +32,11 @@ HF Korea Nemotron persona DB는 세 가지 방식으로 준비할 수 있습니�
 
 1. 탭1에서 `.db/.sqlite` 파일 업로드
 2. `data/personas.db` 경로에 미리 두기
-3. 탭1의 `Persona DB 소스`에서 preset 선택 또는 `직접 입력`
+3. 탭1의 `Persona DB 소스`에서 `Korea Nemotron Persona DB` 선택
+   필요할 때만 `직접 입력` 사용
 
-배포 환경에서 아래 값을 넣어두면 사용자는 `Korea Nemotron Persona DB` preset만 선택하면 됩니다.
+기본 preset은 `nvidia/Nemotron-Personas-Korea`로 설정되어 있습니다.
+다른 repo로 바꾸고 싶으면 배포 환경에서 아래 값을 덮어쓸 수 있습니다.
 
 - `HF_KOREA_NEMOTRON_REPO_ID`
 - `HF_KOREA_NEMOTRON_FILENAME` (선택)
@@ -44,7 +46,7 @@ HF Korea Nemotron persona DB는 세 가지 방식으로 준비할 수 있습니�
 예: `my-org/korean-persona-db`
 
 공개 HF repo는 `HF Token` 없이도 DB 다운로드가 가능할 수 있습니다.
-비공개/gated repo일 때만 `HF Token`을 넣으면 됩니다.
+비공개/gated repo일 때만 `고급 옵션: 비공개 HF repo`에서 토큰을 넣으면 됩니다.
 
 ## 출력 파일 (`outputs/`)
 
