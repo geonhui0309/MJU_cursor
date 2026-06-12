@@ -29,6 +29,11 @@ from modules.insight_generator import generate_insights
 from modules.journey_mapping import run_journey_mapping
 from modules.keyword_analysis import run_keyword_analysis
 from modules.loader import add_response_ids, get_basic_stats, load_csv
+from modules.persona_virtual_research import (
+    build_persona_exports,
+    materialize_persona_db,
+    run_persona_research,
+)
 from modules.qualitative import run_qualitative_analysis
 from modules.quantitative import run_quantitative_analysis
 from modules.report_generator import (
@@ -56,6 +61,10 @@ SESSION_API_KEY = "si_openai_api_key"
 SESSION_AI_ENABLED = "si_ai_enabled"
 SESSION_RESEARCH_ENABLED = "si_research_enabled"
 SESSION_MODEL = "si_openai_model"
+SESSION_HF_API_KEY = "si_hf_api_key"
+SESSION_HF_MODEL = "si_hf_model"
+SESSION_PERSONA_PROVIDER = "si_persona_provider"
+PERSONA_DB_CACHE = BASE_DIR / "data" / "personas.db"
 
 # ─── 스타일 (리뷰 분석기와 유사한 다크 테마 + 상단 탭) ─────────
 st.markdown(
@@ -217,12 +226,13 @@ def _validate_inputs(uploaded, service_name, service_description, survey_purpose
     return None
 
 
-def render_ai_settings() -> tuple[bool, str, str, bool]:
-    """탭1 OpenAI 설정 UI. Returns (enabled, api_key, model)."""
+def render_ai_settings() -> tuple[bool, str, str, bool, str, str, str]:
+    """탭1 LLM 설정 UI."""
     import os
 
     env_key = bool(os.environ.get("OPENAI_API_KEY", "").strip())
-    with st.expander("OpenAI AI 해석 (선택)", expanded=not env_key):
+    with st.expander("LLM 설정 (OpenAI / HF 비교)", expanded=not env_key):
+        st.markdown("**OpenAI**")
         if env_key:
             st.caption("환경변수 `OPENAI_API_KEY`가 설정되어 있습니다.")
         else:
@@ -254,13 +264,57 @@ def render_ai_settings() -> tuple[bool, str, str, bool]:
             help="서비스명으로 웹 검색합니다. AI 종합 리포트는 API Key가 있을 때 생성됩니다.",
         )
 
+        st.markdown("**Hugging Face**")
+        if SESSION_HF_MODEL not in st.session_state:
+            st.session_state[SESSION_HF_MODEL] = os.environ.get("HF_MODEL", "openai/gpt-oss-120b:fastest") or "openai/gpt-oss-120b:fastest"
+        st.text_input(
+            "HF Token",
+            type="password",
+            placeholder="hf_...",
+            key=SESSION_HF_API_KEY,
+            help="Inference Providers 권한이 있는 Hugging Face token",
+        )
+        st.text_input("HF 모델", key=SESSION_HF_MODEL)
+
+        if SESSION_PERSONA_PROVIDER not in st.session_state:
+            st.session_state[SESSION_PERSONA_PROVIDER] = "openai"
+        st.radio(
+            "Virtual IDI / Validation 생성 모델",
+            options=["openai", "hf", "both"],
+            format_func=lambda x: {
+                "openai": "OpenAI만",
+                "hf": "HF만",
+                "both": "OpenAI + HF 비교",
+            }[x],
+            key=SESSION_PERSONA_PROVIDER,
+            horizontal=True,
+            help="DB 추천은 동일하고, 페르소나로 말하게 하는 생성 모델만 달라집니다.",
+        )
+
     api_key = get_api_key(st.session_state.get(SESSION_API_KEY, ""))
     model = st.session_state.get(SESSION_MODEL, "gpt-4o-mini")
+    hf_api_key = str(st.session_state.get(SESSION_HF_API_KEY, "") or "").strip()
+    hf_model = st.session_state.get(SESSION_HF_MODEL, "openai/gpt-oss-120b:fastest")
+    persona_provider = st.session_state.get(SESSION_PERSONA_PROVIDER, "openai")
     if api_key and SESSION_AI_ENABLED not in st.session_state:
         st.session_state[SESSION_AI_ENABLED] = True
     enabled = bool(st.session_state.get(SESSION_AI_ENABLED, False)) if api_key else False
     research = bool(st.session_state.get(SESSION_RESEARCH_ENABLED, False))
-    return enabled, api_key, model, research
+    return enabled, api_key, model, research, hf_api_key, hf_model, persona_provider
+
+
+def resolve_persona_db(uploaded_db) -> Path | None:
+    """업로드 DB가 있으면 저장하고, 없으면 캐시된 로컬 DB 사용."""
+    if uploaded_db is not None:
+        path = materialize_persona_db(
+            uploaded_db.getvalue(),
+            PERSONA_DB_CACHE.parent,
+            uploaded_db.name,
+        )
+        return path
+    if PERSONA_DB_CACHE.exists():
+        return PERSONA_DB_CACHE
+    return None
 
 
 def _render_legend(legend: list[str]) -> None:
@@ -613,6 +667,134 @@ def _render_ai_block(results: dict, section_key: str, title: str | None = None) 
             st.markdown(text)
 
 
+def _render_persona_research_block(results: dict) -> None:
+    """HF persona DB 기반 가상 사용자 검증."""
+    persona = results.get("persona_research") or {}
+    if not persona.get("db_available") and not persona.get("summary"):
+        return
+
+    with st.container(border=True):
+        st.markdown("### 🧑 HF Persona DB · Virtual IDI")
+        if persona.get("summary"):
+            st.markdown(persona["summary"])
+        if persona.get("error"):
+            st.warning(persona["error"])
+            return
+
+        segment = persona.get("segment_profile") or {}
+        attrs = segment.get("attributes") or {}
+        caps = []
+        if segment.get("summary"):
+            caps.append(f"세그먼트: {segment['summary']}")
+        if persona.get("db_meta", {}).get("table"):
+            caps.append(f"DB 테이블: {persona['db_meta']['table']}")
+        if persona.get("db_meta", {}).get("ranking_method"):
+            caps.append(f"랭킹: {persona['db_meta']['ranking_method']}")
+        if persona.get("matched_personas"):
+            caps.append(f"매칭: {len(persona['matched_personas'])}명")
+        if caps:
+            st.caption(" · ".join(caps))
+
+        if attrs:
+            st.dataframe(
+                pd.DataFrame([{"속성": k, "대표 값": v} for k, v in attrs.items()]),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        matches = persona.get("matched_personas") or []
+        if matches:
+            match_df = pd.DataFrame(
+                [
+                    {
+                        "persona_id": p.get("persona_id", ""),
+                        "label": p.get("label", ""),
+                        "match_score": p.get("match_score", 0),
+                        "attr_score": p.get("attr_score", 0),
+                        "token_score": p.get("token_score", 0),
+                        "semantic_score": p.get("semantic_score", 0),
+                        "match_reasons": ", ".join(p.get("match_reasons", [])),
+                        "profile_excerpt": p.get("profile_excerpt", ""),
+                    }
+                    for p in matches
+                ]
+            )
+            st.markdown("**유사 페르소나 매칭**")
+            st.dataframe(match_df, use_container_width=True, hide_index=True)
+
+        provider_outputs = persona.get("provider_outputs") or {}
+        if persona.get("comparison_summary"):
+            st.markdown("**모델 비교 요약**")
+            st.markdown(persona["comparison_summary"])
+
+        idi_sessions = persona.get("virtual_idi") or []
+        if idi_sessions:
+            st.markdown(
+                f"**Virtual IDI** ({str(persona.get('generation_provider', 'openai')).upper()} 기준)"
+            )
+            for session in idi_sessions:
+                with st.expander(
+                    f"{session.get('persona_label', session.get('persona_id', 'persona'))} · {session.get('insight_title', '')}",
+                    expanded=False,
+                ):
+                    for qa in session.get("qa", []):
+                        st.markdown(f"**Q. {qa.get('question', '')}**")
+                        st.write(qa.get("answer", ""))
+                    if session.get("takeaway"):
+                        st.caption(f"Takeaway: {session['takeaway']}")
+        elif persona.get("db_available"):
+            st.caption("API Key가 없거나 생성에 실패해 Virtual IDI는 아직 비어 있습니다.")
+
+        validations = persona.get("validation") or []
+        if validations:
+            st.markdown(
+                f"**Insight Validation** ({str(persona.get('generation_provider', 'openai')).upper()} 기준)"
+            )
+            val_rows = []
+            for item in validations:
+                val_rows.append(
+                    {
+                        "insight_title": item.get("insight_title", ""),
+                        "overall_verdict": item.get("overall_verdict", ""),
+                        "overall_score": item.get("overall_score", ""),
+                        "rationale": item.get("rationale", ""),
+                    }
+                )
+            st.dataframe(pd.DataFrame(val_rows), use_container_width=True, hide_index=True)
+
+            with st.expander("페르소나별 검증 상세"):
+                for item in validations:
+                    st.markdown(f"**{item.get('insight_title', '')}**")
+                    st.caption(
+                        f"{item.get('overall_verdict', '')} · {item.get('overall_score', '')}"
+                    )
+                    for person in item.get("by_persona", []):
+                        st.write(
+                            f"- {person.get('persona_label', person.get('persona_id', ''))}: "
+                            f"{person.get('verdict', '')} ({person.get('score', '')})"
+                        )
+                        if person.get("reason"):
+                            st.caption(person["reason"])
+
+        if len(provider_outputs) >= 2:
+            with st.expander("OpenAI / HF 비교 상세"):
+                for provider_key, bundle in provider_outputs.items():
+                    st.markdown(f"**{provider_key.upper()}** · {bundle.get('model', '')}")
+                    if bundle.get("summary"):
+                        st.caption(bundle["summary"])
+                    rows = []
+                    for item in bundle.get("validations", []):
+                        rows.append(
+                            {
+                                "insight_title": item.get("insight_title", ""),
+                                "verdict": item.get("overall_verdict", ""),
+                                "score": item.get("overall_score", ""),
+                            }
+                        )
+                    if rows:
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
 def run_pipeline(
     uploaded,
     service_name,
@@ -628,6 +810,10 @@ def run_pipeline(
     api_key: str = "",
     ai_model: str = "gpt-4o-mini",
     research_enabled: bool = True,
+    persona_db_path: str | Path | None = None,
+    hf_api_key: str = "",
+    hf_model: str = "openai/gpt-oss-120b:fastest",
+    persona_provider: str = "openai",
 ) -> dict | None:
     err = _validate_inputs(
         uploaded, service_name, service_description, survey_purpose, hypotheses
@@ -741,6 +927,29 @@ def run_pipeline(
     )
     context["service_research"] = service_research
 
+    persona_research = run_persona_research(
+        db_path=persona_db_path,
+        cleaned_df=cleaned_df,
+        insights=insights,
+        context=context,
+        generation_provider=persona_provider,
+        openai_api_key=api_key if ai_enabled else "",
+        openai_model=ai_model,
+        hf_api_key=hf_api_key,
+        hf_model=hf_model,
+        enabled=True,
+    )
+    persona_exports = build_persona_exports(persona_research)
+    for fname, export_df in (
+        ("persona_matches.csv", persona_exports["matches"]),
+        ("virtual_idi.csv", persona_exports["idi"]),
+        ("insight_validation.csv", persona_exports["validation"]),
+        ("virtual_idi_compare.csv", persona_exports["idi_compare"]),
+        ("insight_validation_compare.csv", persona_exports["validation_compare"]),
+    ):
+        if export_df is not None and not export_df.empty:
+            save_dataframe(export_df, fname)
+
     if ai_enabled and api_key:
         ai_behavior = enhance_behaviors_with_ai(behavior_summary, context, api_key, ai_model)
         if ai_behavior:
@@ -807,6 +1016,8 @@ def run_pipeline(
         "context": context,
         "service_research": service_research,
         "behavior_summary": behavior_summary,
+        "persona_research": persona_research,
+        "persona_ai_used": persona_research.get("ai_used", False),
         "ai_interpretations": {},
         "ai_used": False,
     }
@@ -893,6 +1104,12 @@ def render_tab_input() -> None:
         )
         target_users = st.text_input("주요 타깃 사용자", key="si_target_users")
         known_problems = st.text_input("알고 싶은 문제", key="si_known_problems")
+        uploaded_persona_db = st.file_uploader(
+            "HF Persona DB (선택, .db/.sqlite)",
+            type=["db", "sqlite", "sqlite3"],
+            key="si_persona_db",
+            help="Hugging Face Korea Nemotron 페르소나 DB를 넣으면 인사이트 이후 Virtual IDI / 검증 단계가 활성화됩니다.",
+        )
         journey_input = st.text_input(
             "사용자 여정 단계 (쉼표 구분)",
             key="si_journey",
@@ -904,13 +1121,18 @@ def render_tab_input() -> None:
         with c2:
             exclude_questions = st.text_input("제외 문항", key="si_exclude_q")
 
-    ai_enabled, api_key, ai_model, research_enabled = render_ai_settings()
+    ai_enabled, api_key, ai_model, research_enabled, hf_api_key, hf_model, persona_provider = render_ai_settings()
 
     st.markdown("")
     run_btn = st.button("🔍 분석 실행 (규칙 기반 + 선택 AI)", type="primary", use_container_width=True)
 
     if run_btn:
-        msg = "분석·웹 리서치·AI 리포트 생성 중..." if (ai_enabled and api_key) else "규칙 기반 분석 중..."
+        persona_db_path = resolve_persona_db(uploaded_persona_db)
+        persona_llm_enabled = (
+            (persona_provider in {"openai", "both"} and bool(api_key) and ai_enabled)
+            or (persona_provider in {"hf", "both"} and bool(hf_api_key))
+        )
+        msg = "분석·웹 리서치·가상 인터뷰 생성 중..." if (ai_enabled and api_key) or persona_llm_enabled else "규칙 기반 분석 중..."
         with st.spinner(msg):
             results = run_pipeline(
                 uploaded,
@@ -927,12 +1149,21 @@ def render_tab_input() -> None:
                 api_key=api_key,
                 ai_model=ai_model,
                 research_enabled=research_enabled,
+                persona_db_path=persona_db_path,
+                hf_api_key=hf_api_key,
+                hf_model=hf_model,
+                persona_provider=persona_provider,
             )
         if results:
             st.session_state["analysis_results"] = results
             st.session_state["nav_tab_index"] = 1
-            ai_note = " (AI 해석 포함)" if results.get("ai_used") else ""
-            st.success(f"분석이 완료되었습니다{ai_note}. **탭2**에서 결과, **탭3**에서 인사이트를 확인하세요.")
+            notes = []
+            if results.get("ai_used"):
+                notes.append("OpenAI 해석 포함")
+            if results.get("persona_ai_used"):
+                notes.append("가상 인터뷰/검증 포함")
+            note_text = f" ({', '.join(notes)})" if notes else ""
+            st.success(f"분석이 완료되었습니다{note_text}. **탭2**에서 결과, **탭3**에서 인사이트를 확인하세요.")
             st.rerun()
 
     results = st.session_state.get("analysis_results")
@@ -965,6 +1196,7 @@ def render_tab_input() -> None:
                 st.dataframe(results["cleaning_log"], use_container_width=True, hide_index=True)
         _render_service_research_block(results)
         _render_behavior_summary_block(results)
+        _render_persona_research_block(results)
     else:
         st.info("CSV와 필수 정보를 입력한 뒤 **분석 실행**을 눌러 주세요.")
         sample = BASE_DIR / "data" / "sample_survey.csv"
@@ -980,8 +1212,8 @@ def render_tab_analysis(results: dict) -> None:
     else:
         st.caption("탭1에서 OpenAI를 켜면 해석 탭이 활성화됩니다.")
 
-    sub_tabs = ["📊 한눈에 보기", "👥 핵심 사용 행태", "정량 상세", "정성·키워드", "가설", "🤖 AI 해석"]
-    t1, t1b, t2, t3, t4, t5 = st.tabs(sub_tabs)
+    sub_tabs = ["📊 한눈에 보기", "👥 핵심 사용 행태", "🧑 가상 사용자", "정량 상세", "정성·키워드", "가설", "🤖 AI 해석"]
+    t1, t1b, t1c, t2, t3, t4, t5 = st.tabs(sub_tabs)
 
     with t1:
         render_analysis_dashboard(results)
@@ -990,6 +1222,9 @@ def render_tab_analysis(results: dict) -> None:
         _render_behavior_summary_block(results)
         _render_ai_block(results, "핵심 사용 행태")
         _render_ai_block(results, "핵심 사용 행태 (AI)")
+
+    with t1c:
+        _render_persona_research_block(results)
 
     with t2:
         st.subheader("정량 분석 상세")
@@ -1034,6 +1269,7 @@ def render_tab_insights_storage(results: dict) -> None:
     """탭3: 인사이트·액션·다운로드·저장공간."""
     _render_behavior_summary_block(results)
     _render_service_research_block(results)
+    _render_persona_research_block(results)
     _render_ai_block(results, "최종 AI 인사이트", "최종 AI 인사이트")
 
     st.subheader("핵심 인사이트 (규칙 기반)")
@@ -1081,6 +1317,28 @@ def render_tab_insights_storage(results: dict) -> None:
         ("behavior_summary.csv", "text/csv"),
     ]
     for col, (fname, mime) in zip([d1, d2, d3, d4, d5], outputs):
+        p = OUTPUT_DIR / fname
+        with col:
+            if p.exists():
+                st.download_button(fname, _bytes(p), fname, mime=mime, use_container_width=True)
+
+    d6, d7, d8 = st.columns(3)
+    persona_outputs = [
+        ("persona_matches.csv", "text/csv"),
+        ("virtual_idi.csv", "text/csv"),
+        ("insight_validation.csv", "text/csv"),
+        ("virtual_idi_compare.csv", "text/csv"),
+        ("insight_validation_compare.csv", "text/csv"),
+    ]
+    extra_cols = [d6, d7, d8]
+    for col, (fname, mime) in zip(extra_cols, persona_outputs[:3]):
+        p = OUTPUT_DIR / fname
+        with col:
+            if p.exists():
+                st.download_button(fname, _bytes(p), fname, mime=mime, use_container_width=True)
+
+    d9, d10 = st.columns(2)
+    for col, (fname, mime) in zip([d9, d10], persona_outputs[3:]):
         p = OUTPUT_DIR / fname
         with col:
             if p.exists():

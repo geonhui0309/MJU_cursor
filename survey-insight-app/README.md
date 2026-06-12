@@ -20,11 +20,18 @@ streamlit run app.py
 6. 사용자 여정 매핑
 7. 가설 기반 분석
 8. Fact / Interpretation / Action 인사이트
-9. HTML 리포트 (PDF는 WeasyPrint 설치 시)
+9. HF Persona DB 기반 유사 사용자 추천 (가중치 + 유사도 랭킹)
+10. Virtual IDI / Insight Validation (OpenAI / HF / 비교 실행)
+11. HTML 리포트 (PDF는 WeasyPrint 설치 시)
 
 ## 샘플 데이터
 
 `data/sample_survey.csv`를 업로드하여 동작을 확인할 수 있습니다.
+
+HF Korea Nemotron persona DB를 쓰려면 탭1에서 `.db/.sqlite` 파일을 업로드하거나
+`data/personas.db` 경로에 미리 두면 됩니다.
+
+Hugging Face 생성 비교를 쓰려면 `HF Token`과 모델명을 함께 입력하세요.
 
 ## 출력 파일 (`outputs/`)
 
@@ -36,6 +43,11 @@ streamlit run app.py
 - `sentiment_analysis.csv`
 - `journey_mapping.csv`
 - `hypothesis_analysis.csv`
+- `persona_matches.csv`
+- `virtual_idi.csv`
+- `insight_validation.csv`
+- `virtual_idi_compare.csv`
+- `insight_validation_compare.csv`
 - `insight_report.html`
 - `insight_report.pdf` (옵션)
 
