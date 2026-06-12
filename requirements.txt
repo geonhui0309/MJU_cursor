@@ -8,3 +8,4 @@ scikit-learn
 matplotlib
 wordcloud
 duckduckgo-search
+huggingface_hub
