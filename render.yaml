@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: survey-insight-app
+    runtime: docker
+    plan: starter
+    autoDeploy: true
