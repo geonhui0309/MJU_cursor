@@ -42,6 +42,7 @@ PERSONA_TEXT_HINTS = (
 )
 
 LABEL_HINTS = ("name", "persona_id", "id", "uid", "nickname")
+MISSING_TEXTS = {"", "nan", "none", "null", "nat", "n/a", "na", "-", "--", "미응답", "무응답"}
 
 
 def materialize_persona_db(
@@ -210,7 +211,12 @@ def match_personas(
         for idx, cand in enumerate(candidates):
             semantic_score = semantic_scores[idx] if idx < len(semantic_scores) else 0.0
             composite = round(cand["attr_score"] + cand["token_score"] + semantic_score, 2)
-            if composite <= 0:
+            has_signal = (
+                cand["attr_score"] > 0
+                or cand["token_score"] >= 2.0
+                or semantic_score >= 6.0
+            )
+            if composite <= 0 or not has_signal:
                 continue
             row = cand["row"]
             match_reasons = cand["attr_reasons"] + cand["token_reasons"]
@@ -381,7 +387,7 @@ def _find_matching_column(columns, hints: tuple[str, ...]) -> str | None:
 
 
 def _top_value(series: pd.Series) -> str:
-    valid = series.dropna().astype(str).str.strip()
+    valid = series.dropna().map(_clean_text).astype(str)
     valid = valid[valid != ""]
     if valid.empty:
         return ""
@@ -405,7 +411,7 @@ def _build_search_tokens(
     seen = set()
     output = []
     for token in tokens:
-        tok = token.strip().lower()
+        tok = _clean_text(token).lower()
         if len(tok) < 2 or tok in seen:
             continue
         seen.add(tok)
@@ -429,7 +435,8 @@ def _build_segment_query_text(
 
 
 def _tokenize(text: str) -> list[str]:
-    return re.findall(r"[가-힣A-Za-z0-9]{2,}", text or "")
+    cleaned = _clean_text(text)
+    return re.findall(r"[가-힣A-Za-z0-9]{2,}", cleaned)
 
 
 def _choose_persona_table(conn: sqlite3.Connection) -> dict[str, Any] | None:
@@ -493,7 +500,8 @@ def _attribute_match_score(
     for key, target in segment_attrs.items():
         if not target:
             continue
-        candidate = str(persona_attrs.get(key, "") or "").strip()
+            candidate = str(persona_attrs.get(key, "") or "").strip()
+        candidate = _clean_text(candidate)
         if not candidate:
             continue
         if target.lower() == candidate.lower():
@@ -506,7 +514,7 @@ def _attribute_match_score(
 
 
 def _token_match_score(persona_text: str, tokens: list[str]) -> tuple[float, list[str]]:
-    text = (persona_text or "").lower()
+    text = _clean_text(persona_text).lower()
     score = 0.0
     reasons = []
     for token in tokens:
@@ -533,11 +541,11 @@ def _semantic_similarity_scores(query_text: str, texts: list[str]) -> list[float
 def _compose_persona_text(row: dict[str, Any], columns: list[str]) -> str:
     persona_fields = [col for col in columns if any(h in col.lower() for h in PERSONA_TEXT_HINTS)]
     if persona_fields:
-        values = [str(row.get(col, "") or "").strip() for col in persona_fields]
+        values = [_clean_text(row.get(col, "")) for col in persona_fields]
         return "\n".join(v for v in values if v)
     values = []
     for col in columns[:12]:
-        val = str(row.get(col, "") or "").strip()
+        val = _clean_text(row.get(col, ""))
         if val:
             values.append(f"{col}: {val}")
     return "\n".join(values)
@@ -545,9 +553,9 @@ def _compose_persona_text(row: dict[str, Any], columns: list[str]) -> str:
 
 def _row_as_text(row: dict[str, Any], columns: list[str]) -> str:
     return "\n".join(
-        f"{col}: {str(row.get(col, '') or '').strip()}"
+        f"{col}: {_clean_text(row.get(col, ''))}"
         for col in columns[:12]
-        if str(row.get(col, "") or "").strip()
+        if _clean_text(row.get(col, ""))
     )
 
 
@@ -555,7 +563,7 @@ def _persona_identifier(row: dict[str, Any], columns: list[str]) -> str:
     for hint in LABEL_HINTS:
         for col in columns:
             if hint == col.lower() or hint in col.lower():
-                value = str(row.get(col, "") or "").strip()
+                value = _clean_text(row.get(col, ""))
                 if value:
                     return value
     return f"persona-{abs(hash(tuple(str(row.get(c, '')) for c in columns[:5])))}"
@@ -567,13 +575,13 @@ def _persona_label(row: dict[str, Any], columns: list[str]) -> str:
         col = _find_matching_column(columns, attr_cols)
         if not col:
             continue
-        value = str(row.get(col, "") or "").strip()
+        value = _clean_text(row.get(col, ""))
         if value:
             parts.append(value)
     if parts:
         return " / ".join(parts[:4])
     for col in columns:
-        value = str(row.get(col, "") or "").strip()
+        value = _clean_text(row.get(col, ""))
         if value:
             return f"{col}: {value[:40]}"
     return "Unnamed persona"
@@ -585,10 +593,24 @@ def _extract_row_attributes(row: dict[str, Any], columns: list[str]) -> dict[str
         col = _find_matching_column(columns, hints)
         if not col:
             continue
-        value = str(row.get(col, "") or "").strip()
+        value = _clean_text(row.get(col, ""))
         if value:
             attrs[key] = value
     return attrs
+
+
+def _clean_text(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    text = str(value).strip()
+    if text.lower() in MISSING_TEXTS:
+        return ""
+    return text
 
 
 def _flatten_idi_rows(idi_sessions: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:

@@ -30,9 +30,8 @@ streamlit run app.py
 
 HF Korea Nemotron persona DB는 세 가지 방식으로 준비할 수 있습니다.
 
-1. 탭1에서 `.db/.sqlite` 파일 업로드
-2. `data/personas.db` 경로에 미리 두기
-3. 탭1의 `Persona DB 소스`에서 `Korea Nemotron Persona DB` 선택
+1. `data/personas.db` 경로에 미리 두기
+2. 탭1의 `Persona DB 소스`에서 `Korea Nemotron Persona DB` 선택
    필요할 때만 `직접 입력` 사용
 
 기본 preset은 `nvidia/Nemotron-Personas-Korea`로 설정되어 있습니다.

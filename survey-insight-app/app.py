@@ -33,7 +33,6 @@ from modules.keyword_analysis import run_keyword_analysis
 from modules.loader import add_response_ids, get_basic_stats, load_csv
 from modules.persona_virtual_research import (
     build_persona_exports,
-    materialize_persona_db,
     run_persona_research,
 )
 from modules.qualitative import run_qualitative_analysis
@@ -349,25 +348,8 @@ def render_ai_settings() -> tuple[bool, str, str, bool, str, str, str, str]:
     return enabled, api_key, model, research, hf_api_key, hf_repo_id, hf_filename, hf_revision
 
 
-def resolve_persona_db(uploaded_db) -> Path | None:
-    """업로드 DB가 있으면 저장하고, 없으면 캐시된 로컬 DB 사용."""
-    if uploaded_db is not None:
-        path = materialize_persona_db(
-            uploaded_db.getvalue(),
-            PERSONA_DB_CACHE.parent,
-            uploaded_db.name,
-        )
-        return path
-    if PERSONA_DB_CACHE.exists():
-        return PERSONA_DB_CACHE
-    return None
-
-
-def ensure_persona_db(uploaded_db, hf_repo_id: str, hf_token: str, hf_filename: str, hf_revision: str) -> tuple[Path | None, str]:
-    """업로드 또는 HF 자동 다운로드로 persona DB를 준비."""
-    uploaded_path = resolve_persona_db(uploaded_db)
-    if uploaded_path is not None:
-        return uploaded_path, ""
+def ensure_persona_db(hf_repo_id: str, hf_token: str, hf_filename: str, hf_revision: str) -> tuple[Path | None, str]:
+    """로컬 캐시 또는 HF 자동 다운로드로 persona DB를 준비."""
     if hf_repo_id.strip():
         return prepare_persona_db_from_hf(
             repo_id=hf_repo_id,
@@ -1135,12 +1117,6 @@ def render_tab_input() -> None:
         )
         target_users = st.text_input("주요 타깃 사용자", key="si_target_users")
         known_problems = st.text_input("알고 싶은 문제", key="si_known_problems")
-        uploaded_persona_db = st.file_uploader(
-            "HF Persona DB (선택, .db/.sqlite)",
-            type=["db", "sqlite", "sqlite3"],
-            key="si_persona_db",
-            help="Hugging Face Korea Nemotron 페르소나 DB를 넣으면 인사이트 이후 Virtual IDI / 검증 단계가 활성화됩니다.",
-        )
         journey_input = st.text_input(
             "사용자 여정 단계 (쉼표 구분)",
             key="si_journey",
@@ -1168,7 +1144,6 @@ def render_tab_input() -> None:
 
     if run_btn:
         persona_db_path, persona_db_note = ensure_persona_db(
-            uploaded_persona_db,
             hf_repo_id,
             hf_api_key,
             hf_filename,

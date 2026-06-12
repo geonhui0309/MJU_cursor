@@ -34,6 +34,7 @@ FONT_URL = (
 CHART_COLORS = ["#3b82f6", "#8b5cf6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#64748b"]
 
 _KOREAN_FONT_NAME: str | None = None
+_SAFE_SANS = ["NanumGothic", "AppleGothic", "Malgun Gothic", "Noto Sans CJK KR", "DejaVu Sans"]
 
 
 def ensure_korean_font() -> str | None:
@@ -66,6 +67,8 @@ def ensure_korean_font() -> str | None:
     except Exception:
         pass
 
+    plt.rcParams["font.family"] = "sans-serif"
+    plt.rcParams["font.sans-serif"] = _SAFE_SANS
     plt.rcParams["axes.unicode_minus"] = False
     return None
 
@@ -78,8 +81,10 @@ def _apply_font(path: Path) -> None:
             prop = font_manager.FontProperties(fname=str(path))
             _KOREAN_FONT_NAME = prop.get_name()
             plt.rcParams["font.family"] = _KOREAN_FONT_NAME
+            plt.rcParams["font.sans-serif"] = [_KOREAN_FONT_NAME, *_SAFE_SANS]
         except Exception:
             plt.rcParams["font.family"] = "sans-serif"
+            plt.rcParams["font.sans-serif"] = _SAFE_SANS
     plt.rcParams["axes.unicode_minus"] = False
 
 
@@ -175,6 +180,8 @@ def keyword_chart_df(keyword_df: pd.DataFrame, top_n: int = 12) -> pd.DataFrame:
     col_kw = "키워드" if "키워드" in keyword_df.columns else keyword_df.columns[0]
     col_freq = "빈도" if "빈도" in keyword_df.columns else keyword_df.columns[1]
     df = keyword_df.nlargest(top_n, col_freq)[[col_kw, col_freq]].copy()
+    df = df[df[col_kw].notna() & df[col_freq].notna()]
+    df = df[df[col_kw].astype(str).str.strip().str.lower().ne("nan")]
     df.columns = ["키워드", "빈도"]
     return df.set_index("키워드")
 
@@ -199,12 +206,16 @@ def sentiment_counts_df(sentiment_df: pd.DataFrame) -> pd.DataFrame:
     if sentiment_df is None or sentiment_df.empty:
         return pd.DataFrame()
     if "basic_sentiment" in sentiment_df.columns:
-        s = sentiment_df["basic_sentiment"].value_counts()
+        s = sentiment_df["basic_sentiment"].dropna()
+        s = s[s.astype(str).str.strip().str.lower() != "nan"].value_counts()
         return pd.DataFrame({"건수": s.values}, index=[str(x) for x in s.index])
     if "감성" in sentiment_df.columns and "건수" in sentiment_df.columns:
-        return sentiment_df.groupby("감성")["건수"].sum().to_frame()
+        df = sentiment_df[sentiment_df["감성"].notna()].copy()
+        df = df[df["감성"].astype(str).str.strip().str.lower() != "nan"]
+        return df.groupby("감성")["건수"].sum().to_frame()
     if "감성" in sentiment_df.columns:
-        s = sentiment_df["감성"].value_counts()
+        s = sentiment_df["감성"].dropna()
+        s = s[s.astype(str).str.strip().str.lower() != "nan"].value_counts()
         return pd.DataFrame({"건수": s.values}, index=[str(x) for x in s.index])
     return pd.DataFrame()
 
@@ -215,6 +226,8 @@ def journey_chart_df(journey_df: pd.DataFrame) -> pd.DataFrame:
     col_stage = "여정 단계" if "여정 단계" in journey_df.columns else journey_df.columns[0]
     col_cnt = "응답 수" if "응답 수" in journey_df.columns else journey_df.columns[1]
     df = journey_df[[col_stage, col_cnt]].copy()
+    df = df[df[col_stage].notna() & df[col_cnt].notna()]
+    df = df[df[col_stage].astype(str).str.strip().str.lower().ne("nan")]
     df.columns = ["단계", "응답 수"]
     return df.set_index("단계")
 
@@ -225,7 +238,9 @@ def text_structure_counts_df(text_structure_df: pd.DataFrame) -> pd.DataFrame:
     col = "text_structure" if "text_structure" in text_structure_df.columns else "텍스트 구조"
     if col not in text_structure_df.columns:
         return pd.DataFrame()
-    s = text_structure_df[col].value_counts()
+    valid = text_structure_df[col].dropna()
+    valid = valid[valid.astype(str).str.strip().str.lower() != "nan"]
+    s = valid.value_counts()
     return pd.DataFrame({"건수": s.values}, index=[str(x) for x in s.index])
 
 
@@ -245,7 +260,9 @@ def cleaning_counts_series(cleaning_summary: dict) -> pd.Series:
 def hypothesis_verdict_df(hypothesis_df: pd.DataFrame) -> pd.DataFrame:
     if hypothesis_df is None or hypothesis_df.empty or "지지 여부" not in hypothesis_df.columns:
         return pd.DataFrame()
-    s = hypothesis_df["지지 여부"].value_counts()
+    valid = hypothesis_df["지지 여부"].dropna()
+    valid = valid[valid.astype(str).str.strip().str.lower() != "nan"]
+    s = valid.value_counts()
     return pd.DataFrame({"건수": s.values}, index=[str(x) for x in s.index])
 
 
@@ -254,11 +271,15 @@ def make_wordcloud_figure(keyword_df: pd.DataFrame) -> plt.Figure | None:
         return None
     col_kw = "키워드" if "키워드" in keyword_df.columns else keyword_df.columns[0]
     col_freq = "빈도" if "빈도" in keyword_df.columns else keyword_df.columns[1]
-    freq = dict(zip(keyword_df[col_kw].astype(str), keyword_df[col_freq].astype(int)))
+    clean = keyword_df[keyword_df[col_kw].notna() & keyword_df[col_freq].notna()].copy()
+    clean = clean[clean[col_kw].astype(str).str.strip().str.lower() != "nan"]
+    freq = dict(zip(clean[col_kw].astype(str), clean[col_freq].astype(int)))
     if not freq:
         return None
 
     font_path = ensure_korean_font()
+    if any(_contains_korean(word) for word in freq) and not font_path:
+        return None
     wc_kwargs: dict[str, Any] = dict(
         width=560,
         height=260,
@@ -321,8 +342,7 @@ def make_pie_figure(series: pd.Series, title: str = "") -> tuple[plt.Figure | No
         colors=CHART_COLORS[: len(values)],
         wedgeprops={"linewidth": 0.6, "edgecolor": "#0f172a"},
     )
-    _style_axes(ax, title or "")
-    ax.set_title(title or "", fontsize=9, color="#e2e8f0", pad=4)
+    _style_axes(ax, "")
     plt.tight_layout(pad=0.3)
     return fig, legend
 
@@ -350,3 +370,7 @@ def make_grouped_choice_figure(choice_df: pd.DataFrame) -> tuple[plt.Figure | No
     _style_axes(ax, "Choice distribution")
     plt.tight_layout()
     return fig, legend
+
+
+def _contains_korean(text: str) -> bool:
+    return any("가" <= ch <= "힣" for ch in str(text))
