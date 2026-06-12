@@ -5,6 +5,7 @@ Google Forms CSV 기반 설문조사 인사이트 도출 Streamlit 앱
 from __future__ import annotations
 
 import html as html_module
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -63,12 +64,28 @@ SESSION_AI_ENABLED = "si_ai_enabled"
 SESSION_RESEARCH_ENABLED = "si_research_enabled"
 SESSION_MODEL = "si_openai_model"
 SESSION_HF_API_KEY = "si_hf_api_key"
-SESSION_HF_MODEL = "si_hf_model"
-SESSION_PERSONA_PROVIDER = "si_persona_provider"
+SESSION_HF_SOURCE_PRESET = "si_hf_source_preset"
 SESSION_HF_DATASET_REPO = "si_hf_dataset_repo"
 SESSION_HF_DATASET_FILE = "si_hf_dataset_file"
 SESSION_HF_DATASET_REVISION = "si_hf_dataset_revision"
 PERSONA_DB_CACHE = BASE_DIR / "data" / "personas.db"
+KOREA_NEMOTRON_REPO_ID = os.environ.get("HF_KOREA_NEMOTRON_REPO_ID", "").strip()
+KOREA_NEMOTRON_FILENAME = os.environ.get("HF_KOREA_NEMOTRON_FILENAME", "").strip()
+KOREA_NEMOTRON_REVISION = os.environ.get("HF_KOREA_NEMOTRON_REVISION", "").strip()
+HF_PERSONA_PRESETS = {
+    "korea_nemotron": {
+        "label": "Korea Nemotron Persona DB",
+        "repo_id": KOREA_NEMOTRON_REPO_ID,
+        "filename": KOREA_NEMOTRON_FILENAME,
+        "revision": KOREA_NEMOTRON_REVISION,
+    },
+    "custom": {
+        "label": "직접 입력",
+        "repo_id": "",
+        "filename": "",
+        "revision": "",
+    },
+}
 
 # ─── 스타일 (리뷰 분석기와 유사한 다크 테마 + 상단 탭) ─────────
 st.markdown(
@@ -230,12 +247,10 @@ def _validate_inputs(uploaded, service_name, service_description, survey_purpose
     return None
 
 
-def render_ai_settings() -> tuple[bool, str, str, bool, str, str, str]:
-    """탭1 LLM 설정 UI."""
-    import os
-
+def render_ai_settings() -> tuple[bool, str, str, bool, str, str, str, str]:
+    """탭1 OpenAI + HF DB 설정 UI."""
     env_key = bool(os.environ.get("OPENAI_API_KEY", "").strip())
-    with st.expander("LLM 설정 (OpenAI / HF 비교)", expanded=not env_key):
+    with st.expander("LLM 설정", expanded=not env_key):
         st.markdown("**OpenAI**")
         if env_key:
             st.caption("환경변수 `OPENAI_API_KEY`가 설정되어 있습니다.")
@@ -268,71 +283,74 @@ def render_ai_settings() -> tuple[bool, str, str, bool, str, str, str]:
             help="서비스명으로 웹 검색합니다. AI 종합 리포트는 API Key가 있을 때 생성됩니다.",
         )
 
-        st.markdown("**Hugging Face**")
-        if SESSION_HF_MODEL not in st.session_state:
-            st.session_state[SESSION_HF_MODEL] = os.environ.get("HF_MODEL", "openai/gpt-oss-120b:fastest") or "openai/gpt-oss-120b:fastest"
+        st.markdown("**Hugging Face Persona DB**")
+        if SESSION_HF_SOURCE_PRESET not in st.session_state:
+            st.session_state[SESSION_HF_SOURCE_PRESET] = "korea_nemotron"
         if SESSION_HF_DATASET_REPO not in st.session_state:
             st.session_state[SESSION_HF_DATASET_REPO] = ""
         if SESSION_HF_DATASET_FILE not in st.session_state:
             st.session_state[SESSION_HF_DATASET_FILE] = ""
         if SESSION_HF_DATASET_REVISION not in st.session_state:
             st.session_state[SESSION_HF_DATASET_REVISION] = ""
-        st.text_input(
-            "HF Token",
+        hf_token_input = st.text_input(
+            "HF Token (선택)",
             type="password",
             placeholder="hf_...",
             key=SESSION_HF_API_KEY,
-            help="Inference Providers 권한이 있는 Hugging Face token",
+            help="공개 repo는 비워도 됩니다. 비공개/gated repo 다운로드 시에만 필요합니다.",
         )
-        st.text_input(
-            "HF repo id",
-            key=SESSION_HF_DATASET_REPO,
-            help="예: org_or_user/repo_name. 데이터셋 repo 기준입니다.",
-            placeholder="예: my-org/korean-persona-db",
+        selected_preset = st.selectbox(
+            "Persona DB 소스",
+            options=list(HF_PERSONA_PRESETS.keys()),
+            index=list(HF_PERSONA_PRESETS.keys()).index(st.session_state.get(SESSION_HF_SOURCE_PRESET, "korea_nemotron")) if st.session_state.get(SESSION_HF_SOURCE_PRESET, "korea_nemotron") in HF_PERSONA_PRESETS else 0,
+            format_func=lambda key: HF_PERSONA_PRESETS[key]["label"],
+            key=SESSION_HF_SOURCE_PRESET,
         )
-        hfc1, hfc2 = st.columns(2)
-        with hfc1:
-            st.text_input(
-                "HF 파일명 (선택)",
-                key=SESSION_HF_DATASET_FILE,
-                placeholder="예: personas.db 또는 personas.csv",
+        preset = HF_PERSONA_PRESETS[selected_preset]
+        if selected_preset == "custom":
+            hf_repo_input = st.text_input(
+                "HF repo id",
+                key=SESSION_HF_DATASET_REPO,
+                help="예: org_or_user/repo_name. 데이터셋 repo 기준입니다.",
+                placeholder="예: my-org/korean-persona-db",
             )
-        with hfc2:
-            st.text_input(
-                "HF revision (선택)",
-                key=SESSION_HF_DATASET_REVISION,
-                placeholder="main",
-            )
-        st.text_input("HF 모델", key=SESSION_HF_MODEL)
-
-        if SESSION_PERSONA_PROVIDER not in st.session_state:
-            st.session_state[SESSION_PERSONA_PROVIDER] = "openai"
-        st.radio(
-            "Virtual IDI / Validation 생성 모델",
-            options=["openai", "hf", "both"],
-            format_func=lambda x: {
-                "openai": "OpenAI만",
-                "hf": "HF만",
-                "both": "OpenAI + HF 비교",
-            }[x],
-            key=SESSION_PERSONA_PROVIDER,
-            horizontal=True,
-            help="DB 추천은 동일하고, 페르소나로 말하게 하는 생성 모델만 달라집니다.",
-        )
+            hfc1, hfc2 = st.columns(2)
+            with hfc1:
+                hf_file_input = st.text_input(
+                    "HF 파일명 (선택)",
+                    key=SESSION_HF_DATASET_FILE,
+                    placeholder="예: personas.db 또는 personas.csv",
+                )
+            with hfc2:
+                hf_revision_input = st.text_input(
+                    "HF revision (선택)",
+                    key=SESSION_HF_DATASET_REVISION,
+                    placeholder="main",
+                )
+        else:
+            hf_repo_input = preset.get("repo_id", "")
+            hf_file_input = preset.get("filename", "")
+            hf_revision_input = preset.get("revision", "")
+            if hf_repo_input:
+                st.caption(f"선택된 preset: `{hf_repo_input}`")
+            else:
+                st.warning(
+                    "Korea Nemotron preset의 실제 HF repo id가 아직 앱 설정에 등록되지 않았습니다. "
+                    "배포 환경변수 `HF_KOREA_NEMOTRON_REPO_ID`를 설정하거나, `직접 입력`을 선택해 주세요."
+                )
+        st.caption("HF는 persona DB 다운로드/준비에만 사용합니다. Virtual IDI / Validation acting은 OpenAI로 생성됩니다.")
 
     api_key = get_api_key(st.session_state.get(SESSION_API_KEY, ""))
     model = st.session_state.get(SESSION_MODEL, "gpt-4o-mini")
-    hf_api_key = str(st.session_state.get(SESSION_HF_API_KEY, "") or "").strip()
-    hf_model = st.session_state.get(SESSION_HF_MODEL, "openai/gpt-oss-120b:fastest")
-    persona_provider = st.session_state.get(SESSION_PERSONA_PROVIDER, "openai")
-    st.session_state[SESSION_HF_DATASET_REPO] = str(st.session_state.get(SESSION_HF_DATASET_REPO, "") or "").strip()
-    st.session_state[SESSION_HF_DATASET_FILE] = str(st.session_state.get(SESSION_HF_DATASET_FILE, "") or "").strip()
-    st.session_state[SESSION_HF_DATASET_REVISION] = str(st.session_state.get(SESSION_HF_DATASET_REVISION, "") or "").strip()
+    hf_api_key = str(hf_token_input or st.session_state.get(SESSION_HF_API_KEY, "") or "").strip()
+    hf_repo_id = str(hf_repo_input or "").strip()
+    hf_filename = str(hf_file_input or "").strip()
+    hf_revision = str(hf_revision_input or "").strip()
     if api_key and SESSION_AI_ENABLED not in st.session_state:
         st.session_state[SESSION_AI_ENABLED] = True
     enabled = bool(st.session_state.get(SESSION_AI_ENABLED, False)) if api_key else False
     research = bool(st.session_state.get(SESSION_RESEARCH_ENABLED, False))
-    return enabled, api_key, model, research, hf_api_key, hf_model, persona_provider
+    return enabled, api_key, model, research, hf_api_key, hf_repo_id, hf_filename, hf_revision
 
 
 def resolve_persona_db(uploaded_db) -> Path | None:
@@ -773,16 +791,9 @@ def _render_persona_research_block(results: dict) -> None:
             st.markdown("**유사 페르소나 매칭**")
             st.dataframe(match_df, use_container_width=True, hide_index=True)
 
-        provider_outputs = persona.get("provider_outputs") or {}
-        if persona.get("comparison_summary"):
-            st.markdown("**모델 비교 요약**")
-            st.markdown(persona["comparison_summary"])
-
         idi_sessions = persona.get("virtual_idi") or []
         if idi_sessions:
-            st.markdown(
-                f"**Virtual IDI** ({str(persona.get('generation_provider', 'openai')).upper()} 기준)"
-            )
+            st.markdown("**Virtual IDI** (OpenAI acting)")
             for session in idi_sessions:
                 with st.expander(
                     f"{session.get('persona_label', session.get('persona_id', 'persona'))} · {session.get('insight_title', '')}",
@@ -798,9 +809,7 @@ def _render_persona_research_block(results: dict) -> None:
 
         validations = persona.get("validation") or []
         if validations:
-            st.markdown(
-                f"**Insight Validation** ({str(persona.get('generation_provider', 'openai')).upper()} 기준)"
-            )
+            st.markdown("**Insight Validation** (OpenAI acting)")
             val_rows = []
             for item in validations:
                 val_rows.append(
@@ -827,23 +836,6 @@ def _render_persona_research_block(results: dict) -> None:
                         if person.get("reason"):
                             st.caption(person["reason"])
 
-        if len(provider_outputs) >= 2:
-            with st.expander("OpenAI / HF 비교 상세"):
-                for provider_key, bundle in provider_outputs.items():
-                    st.markdown(f"**{provider_key.upper()}** · {bundle.get('model', '')}")
-                    if bundle.get("summary"):
-                        st.caption(bundle["summary"])
-                    rows = []
-                    for item in bundle.get("validations", []):
-                        rows.append(
-                            {
-                                "insight_title": item.get("insight_title", ""),
-                                "verdict": item.get("overall_verdict", ""),
-                                "score": item.get("overall_score", ""),
-                            }
-                        )
-                    if rows:
-                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
 def run_pipeline(
@@ -862,9 +854,6 @@ def run_pipeline(
     ai_model: str = "gpt-4o-mini",
     research_enabled: bool = True,
     persona_db_path: str | Path | None = None,
-    hf_api_key: str = "",
-    hf_model: str = "openai/gpt-oss-120b:fastest",
-    persona_provider: str = "openai",
 ) -> dict | None:
     err = _validate_inputs(
         uploaded, service_name, service_description, survey_purpose, hypotheses
@@ -983,11 +972,8 @@ def run_pipeline(
         cleaned_df=cleaned_df,
         insights=insights,
         context=context,
-        generation_provider=persona_provider,
         openai_api_key=api_key if ai_enabled else "",
         openai_model=ai_model,
-        hf_api_key=hf_api_key,
-        hf_model=hf_model,
         enabled=True,
     )
     persona_exports = build_persona_exports(persona_research)
@@ -995,8 +981,6 @@ def run_pipeline(
         ("persona_matches.csv", persona_exports["matches"]),
         ("virtual_idi.csv", persona_exports["idi"]),
         ("insight_validation.csv", persona_exports["validation"]),
-        ("virtual_idi_compare.csv", persona_exports["idi_compare"]),
-        ("insight_validation_compare.csv", persona_exports["validation_compare"]),
     ):
         if export_df is not None and not export_df.empty:
             save_dataframe(export_df, fname)
@@ -1172,7 +1156,16 @@ def render_tab_input() -> None:
         with c2:
             exclude_questions = st.text_input("제외 문항", key="si_exclude_q")
 
-    ai_enabled, api_key, ai_model, research_enabled, hf_api_key, hf_model, persona_provider = render_ai_settings()
+    (
+        ai_enabled,
+        api_key,
+        ai_model,
+        research_enabled,
+        hf_api_key,
+        hf_repo_id,
+        hf_filename,
+        hf_revision,
+    ) = render_ai_settings()
 
     st.markdown("")
     run_btn = st.button("🔍 분석 실행 (규칙 기반 + 선택 AI)", type="primary", use_container_width=True)
@@ -1180,15 +1173,12 @@ def render_tab_input() -> None:
     if run_btn:
         persona_db_path, persona_db_note = ensure_persona_db(
             uploaded_persona_db,
-            st.session_state.get(SESSION_HF_DATASET_REPO, ""),
+            hf_repo_id,
             hf_api_key,
-            st.session_state.get(SESSION_HF_DATASET_FILE, ""),
-            st.session_state.get(SESSION_HF_DATASET_REVISION, ""),
+            hf_filename,
+            hf_revision,
         )
-        persona_llm_enabled = (
-            (persona_provider in {"openai", "both"} and bool(api_key) and ai_enabled)
-            or (persona_provider in {"hf", "both"} and bool(hf_api_key))
-        )
+        persona_llm_enabled = bool(api_key) and ai_enabled
         msg = "분석·웹 리서치·가상 인터뷰 생성 중..." if (ai_enabled and api_key) or persona_llm_enabled else "규칙 기반 분석 중..."
         with st.spinner(msg):
             results = run_pipeline(
@@ -1207,9 +1197,6 @@ def render_tab_input() -> None:
                 ai_model=ai_model,
                 research_enabled=research_enabled,
                 persona_db_path=persona_db_path,
-                hf_api_key=hf_api_key,
-                hf_model=hf_model,
-                persona_provider=persona_provider,
             )
         if results:
             st.session_state["analysis_results"] = results
@@ -1386,18 +1373,9 @@ def render_tab_insights_storage(results: dict) -> None:
         ("persona_matches.csv", "text/csv"),
         ("virtual_idi.csv", "text/csv"),
         ("insight_validation.csv", "text/csv"),
-        ("virtual_idi_compare.csv", "text/csv"),
-        ("insight_validation_compare.csv", "text/csv"),
     ]
     extra_cols = [d6, d7, d8]
-    for col, (fname, mime) in zip(extra_cols, persona_outputs[:3]):
-        p = OUTPUT_DIR / fname
-        with col:
-            if p.exists():
-                st.download_button(fname, _bytes(p), fname, mime=mime, use_container_width=True)
-
-    d9, d10 = st.columns(2)
-    for col, (fname, mime) in zip([d9, d10], persona_outputs[3:]):
+    for col, (fname, mime) in zip(extra_cols, persona_outputs):
         p = OUTPUT_DIR / fname
         with col:
             if p.exists():

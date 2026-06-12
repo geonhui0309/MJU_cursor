@@ -1,4 +1,4 @@
-"""HF persona DB 기반 가상 사용자 매칭·Virtual IDI·비교 검증."""
+"""HF persona DB 기반 가상 사용자 매칭·Virtual IDI."""
 
 from __future__ import annotations
 
@@ -42,7 +42,6 @@ PERSONA_TEXT_HINTS = (
 )
 
 LABEL_HINTS = ("name", "persona_id", "id", "uid", "nickname")
-VALIDATION_PROVIDERS = {"openai", "hf", "both"}
 
 
 def materialize_persona_db(
@@ -67,15 +66,11 @@ def run_persona_research(
     cleaned_df: pd.DataFrame,
     insights: list[dict[str, Any]],
     context: dict[str, Any],
-    generation_provider: str = "openai",
     openai_api_key: str = "",
     openai_model: str = "gpt-4o-mini",
-    hf_api_key: str = "",
-    hf_model: str = "openai/gpt-oss-120b:fastest",
     enabled: bool = True,
 ) -> dict[str, Any]:
     """페르소나 매칭과 가상 인터뷰/검증을 수행."""
-    provider = generation_provider if generation_provider in VALIDATION_PROVIDERS else "openai"
     result: dict[str, Any] = {
         "enabled": enabled,
         "db_available": False,
@@ -85,9 +80,7 @@ def run_persona_research(
         "matched_personas": [],
         "virtual_idi": [],
         "validation": [],
-        "generation_provider": provider,
-        "provider_outputs": {},
-        "comparison_summary": "",
+        "generation_provider": "openai",
         "summary": "",
         "ai_used": False,
         "error": "",
@@ -118,36 +111,27 @@ def run_persona_research(
         result["summary"] = "페르소나 DB는 연결되었지만 현재 설문 세그먼트와 유사한 후보를 찾지 못했습니다."
         return result
 
-    outputs = generate_provider_outputs(
-        matches=matches[:3],
-        insights=insights[:3],
-        context=context,
-        provider=provider,
-        openai_api_key=openai_api_key,
-        openai_model=openai_model,
-        hf_api_key=hf_api_key,
-        hf_model=hf_model,
-    )
-    result["provider_outputs"] = outputs
-
-    primary_key = _primary_provider_key(provider, outputs)
-    if primary_key:
-        primary = outputs.get(primary_key, {})
-        result["virtual_idi"] = primary.get("idi_sessions", [])
-        result["validation"] = primary.get("validations", [])
-        result["summary"] = primary.get("summary", "")
-        result["ai_used"] = True
-
-    if "openai" in outputs and "hf" in outputs:
-        result["comparison_summary"] = compare_provider_outputs(outputs)
-        if result["comparison_summary"]:
-            result["summary"] = (result["summary"] + "\n\n" + result["comparison_summary"]).strip()
+    if openai_api_key:
+        primary = generate_virtual_idi_and_validation(
+            matches=matches[:3],
+            insights=insights[:3],
+            context=context,
+            provider_label="openai",
+            api_key=openai_api_key,
+            model=openai_model,
+            endpoint="https://api.openai.com/v1/chat/completions",
+        )
+        if primary:
+            result["virtual_idi"] = primary.get("idi_sessions", [])
+            result["validation"] = primary.get("validations", [])
+            result["summary"] = primary.get("summary", "")
+            result["ai_used"] = True
 
     if not result["summary"]:
         seg = segment_profile.get("summary", context.get("target_users", "전체"))
         result["summary"] = (
             f"설문 세그먼트 '{seg}' 기준으로 유사 페르소나 {len(matches)}명을 랭킹했습니다. "
-            "가상 인터뷰는 생성 모델 설정에 따라 추가됩니다."
+            + ("OpenAI로 Virtual IDI/검증까지 생성했습니다." if result["ai_used"] else "DB 추천까지만 완료했습니다.")
         )
     return result
 
@@ -259,44 +243,6 @@ def match_personas(
         return matched[:top_n], meta
     finally:
         conn.close()
-
-
-def generate_provider_outputs(
-    matches: list[dict[str, Any]],
-    insights: list[dict[str, Any]],
-    context: dict[str, Any],
-    provider: str,
-    openai_api_key: str = "",
-    openai_model: str = "gpt-4o-mini",
-    hf_api_key: str = "",
-    hf_model: str = "openai/gpt-oss-120b:fastest",
-) -> dict[str, dict[str, Any]]:
-    outputs: dict[str, dict[str, Any]] = {}
-    if provider in {"openai", "both"} and openai_api_key:
-        obj = generate_virtual_idi_and_validation(
-            matches=matches,
-            insights=insights,
-            context=context,
-            provider_label="openai",
-            api_key=openai_api_key,
-            model=openai_model,
-            endpoint="https://api.openai.com/v1/chat/completions",
-        )
-        if obj:
-            outputs["openai"] = obj
-    if provider in {"hf", "both"} and hf_api_key:
-        obj = generate_virtual_idi_and_validation(
-            matches=matches,
-            insights=insights,
-            context=context,
-            provider_label="hf",
-            api_key=hf_api_key,
-            model=hf_model,
-            endpoint="https://router.huggingface.co/v1/chat/completions",
-        )
-        if obj:
-            outputs["hf"] = obj
-    return outputs
 
 
 def generate_virtual_idi_and_validation(
@@ -411,59 +357,16 @@ def generate_virtual_idi_and_validation(
     }
 
 
-def compare_provider_outputs(outputs: dict[str, dict[str, Any]]) -> str:
-    """OpenAI와 HF 결과를 비교 요약."""
-    openai_out = outputs.get("openai")
-    hf_out = outputs.get("hf")
-    if not openai_out or not hf_out:
-        return ""
-
-    openai_scores = [int(v.get("overall_score", 0) or 0) for v in openai_out.get("validations", [])]
-    hf_scores = [int(v.get("overall_score", 0) or 0) for v in hf_out.get("validations", [])]
-    openai_avg = round(sum(openai_scores) / len(openai_scores), 1) if openai_scores else 0
-    hf_avg = round(sum(hf_scores) / len(hf_scores), 1) if hf_scores else 0
-
-    deltas = []
-    hf_by_title = {v.get("insight_title", ""): v for v in hf_out.get("validations", [])}
-    for item in openai_out.get("validations", []):
-        title = item.get("insight_title", "")
-        other = hf_by_title.get(title)
-        if not other:
-            continue
-        diff = int(item.get("overall_score", 0) or 0) - int(other.get("overall_score", 0) or 0)
-        deltas.append((title, diff))
-    deltas.sort(key=lambda x: abs(x[1]), reverse=True)
-
-    lines = [
-        "모델 비교 검증:",
-        f"- OpenAI 평균 support score: {openai_avg}",
-        f"- HF 평균 support score: {hf_avg}",
-    ]
-    if deltas:
-        title, diff = deltas[0]
-        favored = "OpenAI" if diff > 0 else ("HF" if diff < 0 else "동일")
-        lines.append(f"- 가장 차이가 큰 인사이트: {title} ({favored}, 점수 차 {abs(diff)})")
-    return "\n".join(lines)
-
-
 def build_persona_exports(persona_result: dict[str, Any]) -> dict[str, pd.DataFrame]:
     """다운로드용 DataFrame 생성."""
     matches = pd.DataFrame(persona_result.get("matched_personas", []))
-    primary_idi_rows = _flatten_idi_rows(persona_result.get("virtual_idi", []), persona_result.get("generation_provider", ""))
-    primary_validation_rows = _flatten_validation_rows(persona_result.get("validation", []), persona_result.get("generation_provider", ""))
-
-    all_idi_rows = []
-    all_validation_rows = []
-    for provider_key, bundle in (persona_result.get("provider_outputs") or {}).items():
-        all_idi_rows.extend(_flatten_idi_rows(bundle.get("idi_sessions", []), provider_key))
-        all_validation_rows.extend(_flatten_validation_rows(bundle.get("validations", []), provider_key))
+    primary_idi_rows = _flatten_idi_rows(persona_result.get("virtual_idi", []), "openai")
+    primary_validation_rows = _flatten_validation_rows(persona_result.get("validation", []), "openai")
 
     return {
         "matches": matches,
         "idi": pd.DataFrame(primary_idi_rows),
         "validation": pd.DataFrame(primary_validation_rows),
-        "idi_compare": pd.DataFrame(all_idi_rows),
-        "validation_compare": pd.DataFrame(all_validation_rows),
     }
 
 
@@ -737,12 +640,6 @@ def _flatten_validation_rows(validations: list[dict[str, Any]], provider: str) -
                 }
             )
     return rows
-
-
-def _primary_provider_key(provider: str, outputs: dict[str, dict[str, Any]]) -> str:
-    if provider == "both":
-        return "openai" if "openai" in outputs else ("hf" if "hf" in outputs else "")
-    return provider if provider in outputs else ""
 
 
 def _call_chat_json(

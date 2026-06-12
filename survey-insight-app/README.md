@@ -21,7 +21,7 @@ streamlit run app.py
 7. 가설 기반 분석
 8. Fact / Interpretation / Action 인사이트
 9. HF Persona DB 기반 유사 사용자 추천 (가중치 + 유사도 랭킹)
-10. Virtual IDI / Insight Validation (OpenAI / HF / 비교 실행)
+10. Virtual IDI / Insight Validation (OpenAI acting)
 11. HTML 리포트 (PDF는 WeasyPrint 설치 시)
 
 ## 샘플 데이터
@@ -32,12 +32,19 @@ HF Korea Nemotron persona DB는 세 가지 방식으로 준비할 수 있습니�
 
 1. 탭1에서 `.db/.sqlite` 파일 업로드
 2. `data/personas.db` 경로에 미리 두기
-3. 탭1의 `HF repo id`를 입력해 자동 다운로드
+3. 탭1의 `Persona DB 소스`에서 preset 선택 또는 `직접 입력`
 
-`HF repo id`는 보통 `조직또는사용자명/리포지토리명` 형태입니다.
+배포 환경에서 아래 값을 넣어두면 사용자는 `Korea Nemotron Persona DB` preset만 선택하면 됩니다.
+
+- `HF_KOREA_NEMOTRON_REPO_ID`
+- `HF_KOREA_NEMOTRON_FILENAME` (선택)
+- `HF_KOREA_NEMOTRON_REVISION` (선택)
+
+직접 입력이 필요할 때 `HF repo id`는 보통 `조직또는사용자명/리포지토리명` 형태입니다.
 예: `my-org/korean-persona-db`
 
-Hugging Face 생성 비교를 쓰려면 `HF Token`과 모델명을 함께 입력하세요.
+공개 HF repo는 `HF Token` 없이도 DB 다운로드가 가능할 수 있습니다.
+비공개/gated repo일 때만 `HF Token`을 넣으면 됩니다.
 
 ## 출력 파일 (`outputs/`)
 
@@ -52,8 +59,6 @@ Hugging Face 생성 비교를 쓰려면 `HF Token`과 모델명을 함께 입력
 - `persona_matches.csv`
 - `virtual_idi.csv`
 - `insight_validation.csv`
-- `virtual_idi_compare.csv`
-- `insight_validation_compare.csv`
 - `insight_report.html`
 - `insight_report.pdf` (옵션)
 
